@@ -4,13 +4,13 @@
 #' @export
 run_OmniPeak <- function(...) {
 
-cat("\n")
-  cat(crayon::blue("             +--------------------+\n"))
+  cat("\n")
+  cat(crayon::blue("     +--------------------+\n"))
   app_name <- paste0(
     crayon::black(crayon::bold(crayon::bgBlue("     OmniPeak     ")))
   )
-  cat(crayon::blue("             | "), app_name, crayon::blue(" |\n"), sep = "")
-  cat(crayon::blue("             +--------------------+\n"))
+  cat(crayon::blue("     | "), app_name, crayon::blue(" |\n"), sep = "")
+  cat(crayon::blue("     +--------------------+\n"))
   cat("\n")
   cat(crayon::blue(crayon::bold("Reshaping metabolomics peak table\n")))
   cat("\n")

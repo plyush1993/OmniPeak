@@ -635,13 +635,13 @@ app_server <- function(input, output, session) {
       "df <- read_csv('", file_csv, "', show_col_types = TRUE) %>%\n",
       "  column_to_rownames('Sample') \n",
       "meta_df <- read_csv('", meta_csv, "', show_col_types = TRUE) %>%\n",
-      "  column_to_rownames('Sample') \n",
+      "  column_to_rownames('Sample') \n\n",
 
       "# --- If you downloaded the TXT files: ---\n",
       "df <- read_tsv('", file_txt, "', show_col_types = TRUE) %>% \n",
       "  column_to_rownames('Sample')\n",
       "meta_df <- read_tsv('", meta_txt, "', show_col_types = TRUE) %>% \n",
-      "  column_to_rownames('Sample')\n",
+      "  column_to_rownames('Sample')\n\n",
 
       "# 3. Define Metadata Columns\n",
       "meta_cols <- c(", paste(shQuote(intersect(meta_cols, names(td))), collapse=", "), ")\n\n",
