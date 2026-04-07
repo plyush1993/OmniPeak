@@ -118,6 +118,9 @@ app_ui <- function() {
                   choices = c("mzMine" = "mzmine", "xcms" = "xcms", "MS-DIAL" = "msdial", "Default" = "default"),
                   selected = "mzmine"),
       fileInput("raw_file", "Upload Peak Table (*.csv)", accept = ".csv"),
+            tags$div(style = "margin-top: -45px; margin-bottom: 0px; font-size: 14px; color: #555;",
+         HTML("<i class='fa fa-info-circle'></i> <em>Need data to test? Download example datasets from our <a href='https://github.com/plyush1993/OmniPeak' target='_blank'>GitHub</a>.</em>")
+),
       uiOutput("upload_tab_error"),
 
       uiOutput("global_controls"),
