@@ -118,9 +118,8 @@ app_ui <- function() {
                   choices = c("mzMine" = "mzmine", "xcms" = "xcms", "MS-DIAL" = "msdial", "Default" = "default"),
                   selected = "mzmine"),
       fileInput("raw_file", "Upload Peak Table (*.csv)", accept = ".csv"),
-            tags$div(style = "margin-top: -45px; margin-bottom: 0px; font-size: 14px; color: #555;",
-         HTML("<i class='fa fa-info-circle'></i> <em>Need data to test? Download example datasets from our <a href='https://github.com/plyush1993/OmniPeak' target='_blank'>GitHub</a>.</em>")
-),
+      helpText(HTML("<i class='fa fa-info-circle'></i> Need data to test? Download example datasets from our <a href='https://github.com/plyush1993/OmniPeak' target='_blank'>GitHub</a>.")),
+
       uiOutput("upload_tab_error"),
 
       uiOutput("global_controls"),
@@ -151,7 +150,7 @@ app_ui <- function() {
         condition = "input.add_extra_meta",
         textInput("extra_meta_names", "Variable Name(s) (comma-separated):", placeholder = "Batch, Genotype"),
         textInput("extra_meta_indices", "Token Index(es) (comma-separated):", placeholder = "1, 4"),
-        helpText("Example: If name is 'B_1_KO_Sample', and you want Batch and Genotype, type 'Batch, Genotype' and indices '1, 2' with separator '_'.")
+        helpText("Example: If name is 'B1_KO_Sample', and you want Batch and Genotype, type 'Batch, Genotype' and indices '1, 2' with separator '_'.")
       ),
 
       tags$hr(),
