@@ -368,7 +368,7 @@ ui <- fluidPage(
                   choices = c("mzMine" = "mzmine", "xcms" = "xcms", "MS-DIAL" = "msdial", "Default" = "default"),
                   selected = "mzmine"),
       fileInput("raw_file", "Upload Peak Table (*.csv)", accept = ".csv"),
-      helpText(HTML("<i class='fa fa-info-circle'></i> Need data to test? Download example datasets from our <a href='https://github.com/plyush1993/OmniPeak' target='_blank'>GitHub</a>.")),
+      helpText(HTML("<i class='fa fa-info-circle'></i> Need data to test? Check examples in <a href='https://github.com/plyush1993/OmniPeak' target='_blank'>GitHub</a>.")),
       uiOutput("upload_tab_error"),
       
       uiOutput("global_controls"),
