@@ -21,6 +21,11 @@ if (!require("remotes", quietly = TRUE)) {
 }
 remotes::install_github("plyush1993/OmniPeak", INSTALL_opts = "--no-multiarch")
 ```
+or
+```r
+if (!requireNamespace("pak", quietly = TRUE)) install.packages("pak")
+pak::pak("plyush1993/OmniPeak")
+```
 Run:
 ```r
 OmniPeak::run_OmniPeak()
