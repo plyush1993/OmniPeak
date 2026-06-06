@@ -263,18 +263,139 @@ app_server <- function(input, output, session) {
     if (!inherits(sc, "try-error")) div(style="color:green; font-weight:bold;", sprintf("Detected %d sample columns.", length(sc)))
   })
 
-  labels_vec <- reactive({
-    req(sample_cols())
-    if (!isTRUE(input$add_labels)) return(NULL)
-    if (input$label_source == "from_custom") {
-      req(input$meta_csv)
-      vec <- vroom::vroom(input$meta_csv$datapath, col_names = FALSE, delim = ",") |> dplyr::pull(1)
-      validate(need(length(vec) == length(sample_cols()), "Label count mismatch."))
-      return(as.character(vec))
-    } else {
-      labels_from_sample_names(sample_cols(), token_sep = input$token_sep, token_index = input$token_idx)
-    }
-  })
+
+  output$labels_table <- DT::renderDT({
+  req(sample_cols())
+
+  if (!isTRUE(input$add_labels)) return(NULL)
+  if (!identical(input$label_source, "manual")) return(NULL)
+
+  tbl <- manual_labels()
+  req(tbl)
+
+  DT::datatable(
+    tbl,
+    editable = list(
+      target = "cell",
+      disable = list(columns = c(0)) # lock Sample column
+    ),
+    options = list(
+      pageLength = 10,
+      scrollX = TRUE,
+      scrollY = "250px",
+      ordering = FALSE,
+      searching = FALSE
+    ),
+    rownames = FALSE
+  )
+}, server = FALSE)
+
+  manual_labels <- reactiveVal(NULL)
+
+auto_label_table <- reactive({
+  req(sample_cols())
+
+  make_label_table(
+    sample_cols(),
+    labels_from_sample_names_or_raw(
+      sample_cols(),
+      token_sep = input$token_sep %||% "_",
+      token_index = input$token_idx %||% 2
+    )
+  )
+})
+
+observeEvent(sample_cols(), {
+  req(auto_label_table())
+  manual_labels(auto_label_table())
+}, ignoreInit = FALSE)
+
+observeEvent(input$fill_manual_labels, {
+  req(auto_label_table())
+
+  manual_labels(auto_label_table())
+
+  showNotification(
+    "Editable label table was filled from current token labels.",
+    type = "message",
+    duration = 3
+  )
+}, ignoreInit = TRUE)
+
+observeEvent(input$labels_table_cell_edit, {
+  info <- input$labels_table_cell_edit
+
+  tbl <- manual_labels()
+  req(tbl)
+
+  row_i <- as.integer(info$row)
+
+  if (!is.finite(row_i) || row_i < 1 || row_i > nrow(tbl)) {
+    showNotification("Edited row is outside label table.", type = "error", duration = 3)
+    return(NULL)
+  }
+
+  tbl$Label[row_i] <- trimws(as.character(info$value))
+
+  manual_labels(tbl)
+
+  showNotification(
+    paste0("Label updated: ", tbl$Sample[row_i], " -> ", tbl$Label[row_i]),
+    type = "message",
+    duration = 2
+  )
+}, ignoreInit = TRUE)
+
+ labels_vec <- reactive({
+  req(sample_cols())
+
+  if (!isTRUE(input$add_labels)) return(NULL)
+
+  src <- input$label_source %||% "from_rows"
+
+  if (identical(src, "from_custom")) {
+
+    req(input$meta_csv)
+
+    vec <- vroom::vroom(
+      input$meta_csv$datapath,
+      col_names = FALSE,
+      delim = ",",
+      show_col_types = FALSE
+    ) |>
+      dplyr::pull(1)
+
+    validate(
+      need(length(vec) == length(sample_cols()), "Label count mismatch.")
+    )
+
+    trimws(as.character(vec))
+
+  } else if (identical(src, "manual")) {
+
+    tbl <- manual_labels()
+    req(tbl)
+
+    validate(
+      need(nrow(tbl) == length(sample_cols()),
+           "Manual label table must match the number of samples."),
+      need(identical(as.character(tbl$Sample), as.character(sample_cols())),
+           "Manual label table does not match current sample columns."),
+      need(!any(is.na(tbl$Label) | trimws(tbl$Label) == ""),
+           "All samples must have labels.")
+    )
+
+    trimws(as.character(tbl$Label))
+
+  } else {
+
+    labels_from_sample_names(
+      sample_cols(),
+      token_sep = input$token_sep,
+      token_index = input$token_idx
+    )
+  }
+})
 
   # ---------------------------------------------------------
   # BUILD TIDY EXPORT

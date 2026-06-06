@@ -233,3 +233,23 @@ clean_mzmine_export <- function(df) {
   df[is.na(df)] <- ""
   df
 }
+
+make_label_table <- function(sample_names, labels) {
+  tibble::tibble(
+    Sample = as.character(sample_names),
+    Label  = trimws(as.character(labels))
+  )
+}
+
+labels_from_sample_names_or_raw <- function(sample_names, token_sep = "_", token_index = 2) {
+  tryCatch(
+    labels_from_sample_names(
+      sample_names,
+      token_sep = token_sep,
+      token_index = token_index
+    ),
+    error = function(e) {
+      sample_names
+    }
+  )
+}
