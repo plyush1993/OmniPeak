@@ -258,6 +258,26 @@ clean_mzmine_export <- function(df) {
   df
 }
 
+make_label_table <- function(sample_names, labels) {
+  tibble::tibble(
+    Sample = as.character(sample_names),
+    Label  = trimws(as.character(labels))
+  )
+}
+
+labels_from_sample_names_or_raw <- function(sample_names, token_sep = "_", token_index = 2) {
+  tryCatch(
+    labels_from_sample_names(
+      sample_names,
+      token_sep = token_sep,
+      token_index = token_index
+    ),
+    error = function(e) {
+      sample_names
+    }
+  )
+}
+
 #..........................................
 # UI ----
 #..........................................
@@ -379,17 +399,59 @@ ui <- fluidPage(
       prettyCheckbox("add_labels", "Add Label Column", value = TRUE, icon = icon("check"), status = "primary", animation = "jelly"),
       conditionalPanel(
         condition = "input.add_labels",
-        radioButtons("label_source", "Label source:",
-                     c("From sample names" = "from_rows", "From custom CSV" = "from_custom")),
-        conditionalPanel(
-          condition = "input.label_source == 'from_rows'",
-          numericInput("token_idx", "Main Label Token index", value = 2, min = 1),
-          textInput("token_sep", "Token separator (used for all name parsing)", value = "_")
-        ),
-        conditionalPanel(
-          condition = "input.label_source == 'from_custom'",
-          fileInput("meta_csv", "Upload labels CSV", accept = ".csv")
-        )
+        radioButtons(
+  "label_source",
+  "Label source:",
+  c(
+    "From sample names" = "from_rows",
+    "From custom CSV" = "from_custom",
+    "Manual editable table" = "manual"
+  ),
+  selected = "from_rows"
+),
+
+conditionalPanel(
+  condition = "input.label_source == 'from_rows' || input.label_source == 'manual'",
+  numericInput("token_idx", "Main Label Token index", value = 2, min = 1),
+  textInput("token_sep", "Token separator (used for all name parsing)", value = "_")
+),
+
+conditionalPanel(
+  condition = "input.label_source == 'from_custom'",
+  fileInput("meta_csv", "Upload labels CSV", accept = ".csv")
+),
+
+conditionalPanel(
+  condition = "input.label_source == 'manual'",
+
+  div(
+    style = "display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px;",
+
+    actionButton(
+      "fill_manual_labels",
+      label = tags$span(
+        HTML("Fill editable table from<br>current token labels"),
+        style = "line-height: 1.1;"
+      ),
+      class = "btn-primary",
+      style = "
+        font-size: 12px;
+        padding: 4px 8px;
+        line-height: 1.1;
+        width: 145px;
+        white-space: normal;
+      "
+    )
+  ),
+
+  div(
+    class = "help-block",
+    "Double-click cells in the Label column to edit group names."
+  ),
+
+  tags$hr(),
+  DTOutput("labels_table")
+),
       ),
       
       tags$br(),
@@ -398,8 +460,7 @@ ui <- fluidPage(
       conditionalPanel(
         condition = "input.add_extra_meta",
         textInput("extra_meta_names", "Variable Name(s) (comma-separated):", placeholder = "Batch, Genotype"),
-        textInput("extra_meta_indices", "Token Index(es) (comma-separated):", placeholder = "1, 4"),
-        helpText("Example: If name is 'B1_KO_Sample', and you want Batch and Genotype, type 'Batch, Genotype' and indices '1, 2' with separator '_'.")
+        textInput("extra_meta_indices", "Token Index(es) (comma-separated):", placeholder = "1, 4")
       ),
       
       tags$hr(),
@@ -472,10 +533,64 @@ ui <- fluidPage(
               HTML("Select your software source (<b><i>mzMine</i></b>, <b><i>MS-DIAL</i></b>, <b><i>xcms</i></b>, etc.) and upload your <code>.csv</code> peak table. OmniPeak automatically standardizes the columns by selected names and detects your sample data by provided keywords. You can also specify Feature ID column (which becomes Tidy headers), by default: 'mz_rt'.")
             )),
             
-            div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #18bc9c; padding: 15px; margin-bottom: 15px;",
-              h4(tags$b("2. Metadata & Labels"), style = "margin-top: 0; color: #18bc9c;"),
-              p(style = "margin-bottom: 0;", "Extract experimental metadata directly from your sample names or custom", tags$code(".csv"), "(one column no headers). Define a token separator (e.g., '_') and pick which token index represents the label or extra variables (like Batch or Genotype).")
-            ),
+            div(
+  class = "well",
+  style = "background-color: #f8f9fa; border-left: 5px solid #18bc9c; padding: 15px; margin-bottom: 15px;",
+
+  h4(
+    tags$b("2. Metadata & Labels"),
+    style = "margin-top: 0; color: #18bc9c;"
+  ),
+
+  p(
+    style = "margin-bottom: 8px;",
+    "Add a ",
+    tags$code("Label"),
+    " column and optional metadata columns to the exported tidy table. Labels can be extracted directly from sample names, uploaded as a custom ",
+    tags$code(".csv"),
+    " file, or manually corrected using the editable label table."
+  ),
+
+  p(
+    style = "margin-bottom: 8px;",
+    tags$b("From sample names: ", style = "color: #d35400;"),
+    "Define a token separator, for example ",
+    tags$code("_"),
+    ", and choose which token index represents the sample label. ",
+    "The same separator is also used for optional extra variables such as Batch, Genotype, or Treatment."
+  ),
+
+  p(
+    style = "margin-bottom: 8px;",
+    tags$b("Example: ", style = "color: #d35400;"),
+    "for sample name ",
+    tags$code("B1_KO_Sample_A"),
+    " with separator ",
+    tags$code("_"),
+    ", token index 2 gives label ",
+    tags$code("KO"),
+    ". Token index 1 could be used as Batch ",
+    tags$code("B1"),
+    "."
+  ),
+
+  p(
+    style = "margin-bottom: 8px;",
+    tags$b("Custom CSV: ", style = "color: #d35400;"),
+    "Upload a one-column ",
+    tags$code(".csv"),
+    " file without a header. The number and order of labels must match the detected sample columns."
+  ),
+
+  p(
+    style = "margin-bottom: 0;",
+    tags$b("Manual editable table: ", style = "color: #d35400;"),
+    "Use this option to fill the label table from the current token-based labels and then manually correct group names. ",
+    "Double-click cells in the ",
+    tags$code("Label"),
+    " column to edit them. To start from full raw sample names, use a token index larger than the number of available tokens; the app will fall back to the full sample name."
+  )
+),
             
             div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #008B8B; padding: 15px; margin-bottom: 15px;",
               h4(tags$b("3. Export Data"), style = "margin-top: 0; color: #008B8B;"),
@@ -760,19 +875,140 @@ server <- function(input, output, session) {
     if (!inherits(sc, "try-error")) div(style="color:green; font-weight:bold;", sprintf("Detected %d sample columns.", length(sc)))
   })
   
-  labels_vec <- reactive({
-    req(sample_cols())
-    if (!isTRUE(input$add_labels)) return(NULL)
-    if (input$label_source == "from_custom") {
-      req(input$meta_csv)
-      vec <- vroom::vroom(input$meta_csv$datapath, col_names = FALSE, delim = ",") |> dplyr::pull(1)
-      validate(need(length(vec) == length(sample_cols()), "Label count mismatch."))
-      return(as.character(vec))
-    } else {
-      labels_from_sample_names(sample_cols(), token_sep = input$token_sep, token_index = input$token_idx)
-    }
-  })
+ 
+  output$labels_table <- DT::renderDT({
+  req(sample_cols())
+
+  if (!isTRUE(input$add_labels)) return(NULL)
+  if (!identical(input$label_source, "manual")) return(NULL)
+
+  tbl <- manual_labels()
+  req(tbl)
+
+  DT::datatable(
+    tbl,
+    editable = list(
+      target = "cell",
+      disable = list(columns = c(0)) # lock Sample column
+    ),
+    options = list(
+      pageLength = 10,
+      scrollX = TRUE,
+      scrollY = "250px",
+      ordering = FALSE,
+      searching = FALSE
+    ),
+    rownames = FALSE
+  )
+}, server = FALSE)
   
+  manual_labels <- reactiveVal(NULL)
+
+auto_label_table <- reactive({
+  req(sample_cols())
+
+  make_label_table(
+    sample_cols(),
+    labels_from_sample_names_or_raw(
+      sample_cols(),
+      token_sep = input$token_sep %||% "_",
+      token_index = input$token_idx %||% 2
+    )
+  )
+})
+
+observeEvent(sample_cols(), {
+  req(auto_label_table())
+  manual_labels(auto_label_table())
+}, ignoreInit = FALSE)
+
+observeEvent(input$fill_manual_labels, {
+  req(auto_label_table())
+
+  manual_labels(auto_label_table())
+
+  showNotification(
+    "Editable label table was filled from current token labels.",
+    type = "message",
+    duration = 3
+  )
+}, ignoreInit = TRUE)
+
+observeEvent(input$labels_table_cell_edit, {
+  info <- input$labels_table_cell_edit
+
+  tbl <- manual_labels()
+  req(tbl)
+
+  row_i <- as.integer(info$row)
+
+  if (!is.finite(row_i) || row_i < 1 || row_i > nrow(tbl)) {
+    showNotification("Edited row is outside label table.", type = "error", duration = 3)
+    return(NULL)
+  }
+
+  tbl$Label[row_i] <- trimws(as.character(info$value))
+
+  manual_labels(tbl)
+
+  showNotification(
+    paste0("Label updated: ", tbl$Sample[row_i], " -> ", tbl$Label[row_i]),
+    type = "message",
+    duration = 2
+  )
+}, ignoreInit = TRUE)
+  
+ labels_vec <- reactive({
+  req(sample_cols())
+
+  if (!isTRUE(input$add_labels)) return(NULL)
+
+  src <- input$label_source %||% "from_rows"
+
+  if (identical(src, "from_custom")) {
+
+    req(input$meta_csv)
+
+    vec <- vroom::vroom(
+      input$meta_csv$datapath,
+      col_names = FALSE,
+      delim = ",",
+      show_col_types = FALSE
+    ) |>
+      dplyr::pull(1)
+
+    validate(
+      need(length(vec) == length(sample_cols()), "Label count mismatch.")
+    )
+
+    trimws(as.character(vec))
+
+  } else if (identical(src, "manual")) {
+
+    tbl <- manual_labels()
+    req(tbl)
+
+    validate(
+      need(nrow(tbl) == length(sample_cols()),
+           "Manual label table must match the number of samples."),
+      need(identical(as.character(tbl$Sample), as.character(sample_cols())),
+           "Manual label table does not match current sample columns."),
+      need(!any(is.na(tbl$Label) | trimws(tbl$Label) == ""),
+           "All samples must have labels.")
+    )
+
+    trimws(as.character(tbl$Label))
+
+  } else {
+
+    labels_from_sample_names(
+      sample_cols(),
+      token_sep = input$token_sep,
+      token_index = input$token_idx
+    )
+  }
+})
+
   # ---------------------------------------------------------
   # BUILD TIDY EXPORT
   # ---------------------------------------------------------
