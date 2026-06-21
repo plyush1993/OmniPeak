@@ -31,6 +31,61 @@ fluidPage(
     }
   ")),
 
+    tags$head(tags$style(HTML("
+  /* Editable Labels table: prevent white-on-white editing issue */
+
+  #labels_table.html-widget.datatables {
+    background-color: transparent !important;
+  }
+
+  #labels_table .dataTables_wrapper,
+  #labels_table table.dataTable,
+  #labels_table .dataTables_scroll,
+  #labels_table .dataTables_scrollHead,
+  #labels_table .dataTables_scrollBody {
+    background-color: #ffffff !important;
+    color: #2c3e50 !important;
+  }
+
+  #labels_table table.dataTable th,
+  #labels_table table.dataTable td {
+    background-color: #ffffff !important;
+    color: #2c3e50 !important;
+  }
+
+  /* Cell when focused / double-clicked / edited */
+  #labels_table table.dataTable tbody td.focus,
+  #labels_table table.dataTable tbody td:focus,
+  #labels_table table.dataTable tbody tr.selected td,
+  #labels_table table.dataTable tbody td.selected {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: inset 0 0 0 2px #007BA7 !important;
+  }
+
+  /* Input box created during editing */
+  #labels_table input,
+  #labels_table textarea,
+  #labels_table .dataTables_wrapper input,
+  #labels_table .dataTables_wrapper textarea {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    caret-color: #000000 !important;
+    border: 1px solid #007BA7 !important;
+  }
+
+  /* Keep search / info / pagination readable if shown */
+  #labels_table .dataTables_length,
+  #labels_table .dataTables_filter,
+  #labels_table .dataTables_info,
+  #labels_table .dataTables_paginate {
+    color: #000000 !important;
+    font-weight: bold;
+    padding: 5px;
+  }
+"))),
+
   tags$head(tags$style(HTML("
     /* Existing Footer and layout styles */
     .app-footer { position: fixed; left:0; right:0; bottom:0;
