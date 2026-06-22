@@ -6,7 +6,7 @@
 ### Description :bookmark_tabs:
 The [`Shiny App`](https://shiny.posit.co/) for reshaping metabolomics peak table: 
 - Directly reads the output peak table from [`mzMine`](https://mzio.io/mzmine-news/), [`xcms`](https://www.bioconductor.org/packages/release/bioc/html/xcms.html), [`MS-DIAL`](https://systemsomicslab.github.io/compms/msdial/main.html), and Default format (see [examples of inputs](https://github.com/plyush1993/OmniPeak/tree/main/toy_examples))
-- Prepares tidy table: features (peaks) as columns, samples as rows, with Label and other metadata columns. Exports in `.csv` or `.txt`
+- Prepares tidy tables: features (peaks) as columns, samples as rows, with Label and other metadata columns, and metadata table separately. Exports in `.csv` or `.txt`
 - Restores native data format
 - Generates an R script for reading output tailored to your specific dataset
 
