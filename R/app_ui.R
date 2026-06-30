@@ -31,7 +31,38 @@ fluidPage(
     }
   ")),
 
-    tags$head(tags$style(HTML("
+  tags$style(HTML("
+  .source-box {
+    background: #ffffff;
+    border: 1px solid #dfe6e9;
+    border-left: 5px solid #007BA7;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+
+  .source-box-metadata {
+    border-left-color: #18bc9c;
+  }
+
+  .source-box-samplename {
+    border-left-color: #3498db;
+  }
+
+  .source-box-title {
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 5px;
+  }
+
+  .source-box-text {
+    font-size: 14px;
+    color: #555;
+    margin-bottom: 0;
+  }
+")),
+
+  tags$head(tags$style(HTML("
   /* Editable Labels table: prevent white-on-white editing issue */
 
   #labels_table.html-widget.datatables {
@@ -179,74 +210,169 @@ fluidPage(
       uiOutput("global_controls"),
 
       tags$hr(),
-      h3(class = "highlight", "2. Metadata & Labels"),
+h3(class = "highlight", "2. Metadata & Labels"),
 
-      prettyCheckbox("add_labels", "Add Label Column", value = TRUE, icon = icon("check"), status = "primary", animation = "jelly"),
-      conditionalPanel(
-        condition = "input.add_labels",
-        radioButtons(
-  "label_source",
-  "Label source:",
-  c(
-    "From sample names" = "from_rows",
-    "From custom CSV" = "from_custom",
-    "Manual editable table" = "manual"
+div(
+  class = "source-box source-box-metadata",
+
+  div(class = "source-box-title", "Source: metadata file"),
+
+prettyCheckbox(
+  "add_metadata_csv",
+  "Add metadata from CSV",
+  value = FALSE,
+  status = "primary",
+  icon = icon("check"),
+  animation = "jelly"
+),
+
+conditionalPanel(
+  condition = "input.add_metadata_csv == true || (input.add_labels == true && input.label_source == 'from_metadata')",
+
+  fileInput(
+    "metadata_csv",
+    "Upload metadata CSV with column names",
+    accept = ".csv"
   ),
-  selected = "from_rows"
-),
 
-conditionalPanel(
-  condition = "input.label_source == 'from_rows' || input.label_source == 'manual'",
-  numericInput("token_idx", "Main Label Token index", value = 2, min = 1),
-  textInput("token_sep", "Token separator (used for all name parsing)", value = "_")
-),
+  uiOutput("metadata_sample_col_ui"),
+  uiOutput("metadata_label_col_ui"),
 
-conditionalPanel(
-  condition = "input.label_source == 'from_custom'",
-  fileInput("meta_csv", "Upload labels CSV", accept = ".csv")
-),
+  tags$hr(style = "margin-top: 10px; margin-bottom: 15px;"),
+  h4("Sample Name Cleaning", style = "margin-top:0px; font-weight:bold;"),
 
-conditionalPanel(
-  condition = "input.label_source == 'manual'",
+  prettyCheckbox(
+    "clean_sample_names_export",
+    "Clean sample names",
+    value = FALSE,
+    status = "primary",
+    icon = icon("check"),
+    animation = "jelly"
+  ),
 
-  div(
-    style = "display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px;",
+  conditionalPanel(
+    condition = "input.clean_sample_names_export == true",
 
-    actionButton(
-      "fill_manual_labels",
-      label = tags$span(
-        HTML("Fill editable table from<br>current token labels"),
-        style = "line-height: 1.1;"
+    selectizeInput(
+      "sample_remove_suffixes",
+      "Remove suffixes/extensions:",
+      choices = c(
+        ".mzML", ".mzXML", ".raw", ".RAW",
+        ".cdf", ".CDF",
+        ".mzData", ".mzdata",
+        ".wiff", ".WIFF",
+        ".d", ".D",
+        " Peak area", " Peak Area",
+        " Peak height", " Peak Height",
+        "_Area", "_Height",
+        " Area", " Height"
       ),
-      class = "btn-primary",
-      style = "
-        font-size: 12px;
-        padding: 4px 8px;
-        line-height: 1.1;
-        width: 145px;
-        white-space: normal;
-      "
+      selected = c(
+        " Peak area", " Peak height",
+        "_Area", "_Height",
+        " Area", " Height"
+      ),
+      multiple = TRUE,
+      options = list(
+        create = TRUE,
+        createOnBlur = TRUE,
+        placeholder = "Type custom suffix and press Enter"
+      )
     )
   ),
 
-  div(
-    class = "help-block",
-    "Double-click cells in the Label column to edit group names."
+uiOutput("metadata_match_message")
+)),
+
+tags$hr(),
+
+div(
+  class = "source-box source-box-samplename",
+  div(class = "source-box-title", "Source: sample names or selected column"),
+
+prettyCheckbox(
+  "add_labels",
+  "Add Label Column",
+  value = FALSE,
+  icon = icon("check"),
+  status = "primary",
+  animation = "jelly"
+),
+
+conditionalPanel(
+  condition = "input.add_labels",
+
+   radioButtons(
+      "label_source",
+      "Label source:",
+      choiceNames = list(
+        HTML("<b>From sample names</b><br><span style='font-size:12px;color:#666;'>Parse labels from file/sample names using tokens.</span>"),
+        HTML("<b>From uploaded metadata column</b><br><span style='font-size:12px;color:#666;'>Select one metadata file column from above as Label.</span>"),
+        HTML("<b>From custom one-column CSV</b><br><span style='font-size:12px;color:#666;'>One label per sample, same order as detected samples.</span>"),
+        HTML("<b>Manual editable table</b><br><span style='font-size:12px;color:#666;'>Edit labels directly in the app.</span>")
+      ),
+      choiceValues = c(
+        "from_rows",
+        "from_metadata",
+        "from_custom",
+        "manual"
+      ),
+      selected = "from_rows"
+    ),
+
+  uiOutput("label_message"),
+
+  conditionalPanel(
+    condition = "input.label_source == 'from_rows' || input.label_source == 'manual'",
+    numericInput("token_idx", "Main Label Token index", value = 2, min = 1),
+    textInput("token_sep", "Token separator (used for all name parsing)", value = "_")
   ),
 
-  tags$hr(),
-  DTOutput("labels_table")
-),
-      ),
+  conditionalPanel(
+    condition = "input.label_source == 'from_custom'",
+    fileInput("meta_csv", "Upload labels CSV", accept = ".csv")
+  ),
 
-      tags$br(),
+  conditionalPanel(
+    condition = "input.label_source == 'manual'",
+
+    div(
+      style = "display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px;",
+
+      actionButton(
+        "fill_manual_labels",
+        label = tags$span(
+          HTML("Fill editable table from<br>current token labels"),
+          style = "line-height: 1.1;"
+        ),
+        class = "btn-primary",
+        style = "
+          font-size: 12px;
+          padding: 4px 8px;
+          line-height: 1.1;
+          width: 145px;
+          white-space: normal;
+        "
+      )
+    ),
+
+    div(
+      class = "help-block",
+      "Double-click cells in the Label column to edit group names."
+    ),
+
+    tags$hr(),
+    DTOutput("labels_table")
+  )
+),
+
       prettyCheckbox("add_run_order", "Add Order by Sequence", value = FALSE, status = "primary", icon = icon("check"), animation = "jelly"),
       prettyCheckbox("add_extra_meta", "Extract Extra Variables", value = FALSE, status = "primary", icon = icon("check"), animation = "jelly"),
       conditionalPanel(
         condition = "input.add_extra_meta",
         textInput("extra_meta_names", "Variable Name(s) (comma-separated):", placeholder = "Batch, Genotype"),
         textInput("extra_meta_indices", "Token Index(es) (comma-separated):", placeholder = "1, 4")
-      ),
+      )),
 
       tags$hr(),
       h3(class = "highlight", "3. Export Data"),
@@ -328,53 +454,86 @@ conditionalPanel(
   ),
 
   p(
-    style = "margin-bottom: 8px;",
-    "Add a ",
-    tags$code("Label"),
-    " column and optional metadata columns to the exported tidy table. Labels can be extracted directly from sample names, uploaded as a custom ",
-    tags$code(".csv"),
-    " file, or manually corrected using the editable label table."
-  ),
+  style = "margin-bottom: 10px;",
+  "Use this section to add sample information to the exported tidy table. ",
+  "Metadata columns and the ",
+  tags$code("Label"),
+  " column are related, but they are not the same."
+),
 
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Metadata from CSV", style = "color:#18bc9c;"),
   p(
-    style = "margin-bottom: 8px;",
-    tags$b("From sample names: ", style = "color: #d35400;"),
-    "Define a token separator, for example ",
-    tags$code("_"),
-    ", and choose which token index represents the sample label. ",
-    "The same separator is also used for optional extra variables such as Batch, Genotype, or Treatment."
-  ),
-
-  p(
-    style = "margin-bottom: 8px;",
-    tags$b("Example: ", style = "color: #d35400;"),
-    "for sample name ",
-    tags$code("B1_KO_Sample_A"),
-    " with separator ",
-    tags$code("_"),
-    ", token index 2 gives label ",
-    tags$code("KO"),
-    ". Token index 1 could be used as Batch ",
-    tags$code("B1"),
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "Upload a metadata table with column names and one sample-name column. ",
+    "OmniPeak matches rows by sample name and adds the remaining columns to the tidy output, for example ",
+    tags$code("Condition"),
+    ", ",
+    tags$code("Batch"),
+    ", ",
+    tags$code("Patient"),
+    ", or ",
+    tags$code("Timepoint"),
     "."
-  ),
-
-  p(
-    style = "margin-bottom: 8px;",
-    tags$b("Custom CSV: ", style = "color: #d35400;"),
-    "Upload a one-column ",
-    tags$code(".csv"),
-    " file without a header. The number and order of labels must match the detected sample columns."
-  ),
-
-  p(
-    style = "margin-bottom: 0;",
-    tags$b("Manual editable table: ", style = "color: #d35400;"),
-    "Use this option to fill the label table from the current token-based labels and then manually correct group names. ",
-    "Double-click cells in the ",
-    tags$code("Label"),
-    " column to edit them. To start from full raw sample names, use a token index larger than the number of available tokens; the app will fall back to the full sample name."
   )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Labels from sample names", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "The optional ",
+    tags$code("Label"),
+    " column can be parsed directly from sample names using a separator and token index. ",
+    "This is useful when group names are already encoded in the file names."
+  )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Labels from metadata", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "Alternatively, the ",
+    tags$code("Label"),
+    " column can be taken from one selected column in the uploaded metadata table, for example ",
+    tags$code("Condition"),
+    " or ",
+    tags$code("Treatment"),
+    "."
+  )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Order and extra variables from sample names", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "You can also add ",
+    tags$code("Order"),
+    " by detected sample sequence and extract additional variables directly from sample names, such as ",
+    tags$code("Batch"),
+    ", ",
+    tags$code("Genotype"),
+    ", or ",
+    tags$code("Treatment"),
+    ", using token indices."
+  )
+),
+
+p(
+  style = "margin-bottom: 0;",
+  tags$b("Optional cleaning: ", style = "color: #18bc9c;"),
+  "Use sample-name cleaning only when sample names in the peak table and metadata file differ by suffixes such as ",
+  tags$code(".mzML"),
+  ", ",
+  tags$code("Peak area"),
+  ", or ",
+  tags$code("_Area"),
+  "."
+)
 ),
 
             div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #008B8B; padding: 15px; margin-bottom: 15px;",
@@ -398,7 +557,6 @@ conditionalPanel(
             tags$br(), tags$br()
           )
         ))
-
 
     )
   )

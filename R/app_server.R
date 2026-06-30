@@ -193,7 +193,7 @@ app_server <- function(input, output, session) {
         condition = "input.sample_mode == 'manual'",
         selectizeInput("sample_cols_manual", "Pick sample columns:",
                        choices = cols, selected = NULL, multiple = TRUE)
-      ),
+      )
     )
   })
 
@@ -258,6 +258,196 @@ app_server <- function(input, output, session) {
     sc
   })
 
+  sample_name_map <- reactive({
+  req(sample_cols())
+
+  make_sample_name_map(
+    sample_cols = sample_cols(),
+    clean_enabled = isTRUE(input$clean_sample_names_export),
+    remove_suffixes = input$sample_remove_suffixes %||% ""
+  )
+})
+
+uploaded_metadata_raw <- reactive({
+  req(
+    isTRUE(input$add_metadata_csv) ||
+      (isTRUE(input$add_labels) && identical(input$label_source, "from_metadata")),
+    input$metadata_csv
+  )
+
+  as.data.frame(
+    vroom::vroom(
+      input$metadata_csv$datapath,
+      delim = ",",
+      col_names = TRUE,
+      show_col_types = FALSE
+    ),
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+})
+
+output$metadata_sample_col_ui <- renderUI({
+  req(uploaded_metadata_raw())
+
+  cols <- names(uploaded_metadata_raw())
+
+  selectInput(
+    "metadata_sample_col",
+    "Metadata sample-name column:",
+    choices = cols,
+    selected = guess_metadata_sample_col(cols)
+  )
+})
+
+output$metadata_label_col_ui <- renderUI({
+  req(uploaded_metadata_raw())
+
+  if (!isTRUE(input$add_labels) || !identical(input$label_source, "from_metadata")) {
+    return(NULL)
+  }
+
+  cols <- names(uploaded_metadata_raw())
+
+  sample_col <- input$metadata_sample_col %||% guess_metadata_sample_col(cols)
+
+  choices <- setdiff(cols, sample_col)
+
+  validate(
+    need(length(choices) > 0, "Metadata file has no column available for labels.")
+  )
+
+  selectizeInput(
+    "metadata_label_col",
+    "Metadata column to use as Label/Condition:",
+    choices = choices,
+    selected = guess_metadata_label_col(cols, sample_col),
+    multiple = FALSE,
+    options = list(
+      placeholder = "Select metadata column for labels"
+    )
+  )
+})
+
+uploaded_metadata_aligned <- reactive({
+  req(uploaded_metadata_raw(), sample_name_map(), input$metadata_sample_col)
+
+  meta <- uploaded_metadata_raw()
+  smap <- sample_name_map()
+
+  validate(
+    need(input$metadata_sample_col %in% names(meta),
+         "Selected metadata sample column was not found.")
+  )
+
+  meta_key <- clean_sample_names_optional(
+    meta[[input$metadata_sample_col]],
+    enabled = isTRUE(input$clean_sample_names_export),
+    remove_suffixes = input$sample_remove_suffixes %||% ""
+  )
+
+  app_key <- smap$Sample
+
+  validate(
+    need(!anyDuplicated(meta_key),
+         "Metadata sample names are duplicated after optional cleaning.")
+  )
+
+  idx <- match(app_key, meta_key)
+
+  if (any(is.na(idx))) {
+    missing_samples <- app_key[is.na(idx)]
+
+    validate(
+      need(
+        FALSE,
+        paste0(
+          "Metadata file is missing these sample names: ",
+          paste(head(missing_samples, 10), collapse = ", "),
+          if (length(missing_samples) > 10) " ..." else ""
+        )
+      )
+    )
+  }
+
+  meta[idx, , drop = FALSE]
+})
+
+output$metadata_match_message <- renderUI({
+  active <- isTRUE(input$add_metadata_csv) ||
+    (isTRUE(input$add_labels) && identical(input$label_source, "from_metadata"))
+
+  if (!active) return(NULL)
+
+  if (is.null(input$raw_file)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a peak table first, so OmniPeak can detect sample names."
+    ))
+  }
+
+  if (is.null(input$metadata_csv)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a metadata CSV file with sample names and metadata columns."
+    ))
+  }
+
+  if (is.null(input$metadata_sample_col) || !nzchar(input$metadata_sample_col)) {
+    return(omni_status_box(
+      "warning",
+      "Select the metadata column that contains sample names."
+    ))
+  }
+
+  err <- NULL
+
+  aligned <- tryCatch(
+    uploaded_metadata_aligned(),
+    shiny.silent.error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    },
+    error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    }
+  )
+
+  if (!is.null(err) && nzchar(err)) {
+    return(omni_status_box("error", err))
+  }
+
+  if (!is.null(err)) {
+    return(omni_status_box(
+      "warning",
+      "Metadata cannot be matched yet. Check the selected sample-name column."
+    ))
+  }
+
+  n_meta_cols <- max(0, ncol(aligned) - 1)
+
+  omni_status_box(
+    "success",
+    sprintf(
+      "Metadata matched successfully: %d samples. Metadata columns available: %d.",
+      nrow(aligned),
+      n_meta_cols
+    )
+  )
+})
+
+uploaded_metadata_to_add <- reactive({
+  req(uploaded_metadata_aligned())
+
+  meta <- uploaded_metadata_aligned()
+  sample_col <- input$metadata_sample_col
+
+  meta <- meta[, setdiff(names(meta), sample_col), drop = FALSE]
+
+  as.data.frame(meta, check.names = FALSE, stringsAsFactors = FALSE)
+})
+
   output$sample_cols_status <- renderUI({
     sc <- try(sample_cols(), silent = TRUE)
     if (!inherits(sc, "try-error")) div(style="color:green; font-weight:bold;", sprintf("Detected %d sample columns.", length(sc)))
@@ -293,19 +483,21 @@ app_server <- function(input, output, session) {
   manual_labels <- reactiveVal(NULL)
 
 auto_label_table <- reactive({
-  req(sample_cols())
+  req(sample_name_map())
+
+  smap <- sample_name_map()
 
   make_label_table(
-    sample_cols(),
+    smap$Sample,
     labels_from_sample_names_or_raw(
-      sample_cols(),
+      smap$Sample,
       token_sep = input$token_sep %||% "_",
       token_index = input$token_idx %||% 2
     )
   )
 })
 
-observeEvent(sample_cols(), {
+observeEvent(sample_name_map(), {
   req(auto_label_table())
   manual_labels(auto_label_table())
 }, ignoreInit = FALSE)
@@ -346,11 +538,12 @@ observeEvent(input$labels_table_cell_edit, {
   )
 }, ignoreInit = TRUE)
 
- labels_vec <- reactive({
-  req(sample_cols())
+labels_vec <- reactive({
+  req(sample_name_map())
 
   if (!isTRUE(input$add_labels)) return(NULL)
 
+  smap <- sample_name_map()
   src <- input$label_source %||% "from_rows"
 
   if (identical(src, "from_custom")) {
@@ -366,10 +559,30 @@ observeEvent(input$labels_table_cell_edit, {
       dplyr::pull(1)
 
     validate(
-      need(length(vec) == length(sample_cols()), "Label count mismatch.")
+      need(length(vec) == nrow(smap), "Label count mismatch.")
     )
 
     trimws(as.character(vec))
+
+  } else if (identical(src, "from_metadata")) {
+
+    req(uploaded_metadata_aligned(), input$metadata_label_col)
+
+    meta <- uploaded_metadata_aligned()
+
+    validate(
+      need(input$metadata_label_col %in% names(meta),
+           "Selected metadata label column was not found.")
+    )
+
+    vec <- trimws(as.character(meta[[input$metadata_label_col]]))
+
+    validate(
+      need(!any(is.na(vec) | vec == ""),
+           "Selected metadata label column contains empty values.")
+    )
+
+    vec
 
   } else if (identical(src, "manual")) {
 
@@ -377,10 +590,10 @@ observeEvent(input$labels_table_cell_edit, {
     req(tbl)
 
     validate(
-      need(nrow(tbl) == length(sample_cols()),
+      need(nrow(tbl) == nrow(smap),
            "Manual label table must match the number of samples."),
-      need(identical(as.character(tbl$Sample), as.character(sample_cols())),
-           "Manual label table does not match current sample columns."),
+      need(identical(as.character(tbl$Sample), as.character(smap$Sample)),
+           "Manual label table does not match current sample names."),
       need(!any(is.na(tbl$Label) | trimws(tbl$Label) == ""),
            "All samples must have labels.")
     )
@@ -390,11 +603,77 @@ observeEvent(input$labels_table_cell_edit, {
   } else {
 
     labels_from_sample_names(
-      sample_cols(),
+      smap$Sample,
       token_sep = input$token_sep,
       token_index = input$token_idx
     )
   }
+})
+
+output$label_message <- renderUI({
+  if (!isTRUE(input$add_labels)) return(NULL)
+
+  src <- input$label_source %||% "from_rows"
+
+  if (identical(src, "from_custom") && is.null(input$meta_csv)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a one-column labels CSV file, one label per detected sample."
+    ))
+  }
+
+  if (identical(src, "from_metadata") && is.null(input$metadata_csv)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a metadata CSV file first, then choose a metadata column for Label."
+    ))
+  }
+
+  if (identical(src, "from_metadata") &&
+      (is.null(input$metadata_label_col) || !nzchar(input$metadata_label_col))) {
+    return(omni_status_box(
+      "warning",
+      "Select the metadata column to use as Label/Condition."
+    ))
+  }
+
+  err <- NULL
+
+  vec <- tryCatch(
+    labels_vec(),
+    shiny.silent.error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    },
+    error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    }
+  )
+
+  if (!is.null(err) && nzchar(err)) {
+    return(omni_status_box("error", err))
+  }
+
+  if (!is.null(err) || is.null(vec)) return(NULL)
+
+  vec <- trimws(as.character(vec))
+
+  if (any(is.na(vec) | vec == "")) {
+    return(omni_status_box(
+      "error",
+      "Some labels are empty. Check token parsing, metadata column, custom CSV, or manual table."
+    ))
+  }
+
+  omni_status_box(
+    "success",
+    sprintf(
+      "Labels ready: %d samples, %d unique label(s).",
+      length(vec),
+      length(unique(vec))
+    )
+  )
 })
 
   # ---------------------------------------------------------
@@ -410,7 +689,9 @@ observeEvent(input$labels_table_cell_edit, {
     on.exit(waiter_hide())
 
     df <- processed_std()
-    sc <- sample_cols()
+    smap <- sample_name_map()
+    sc <- smap$OriginalSample
+    sample_out <- smap$Sample
 
     meta_cols <- setdiff(names(df), sc)
     state$dictionary <- df[, meta_cols, drop = FALSE]
@@ -418,7 +699,7 @@ observeEvent(input$labels_table_cell_edit, {
     mat_only <- df[, c(".FID", sc), drop = FALSE]
     tidy_mat <- as.data.frame(data.table::transpose(mat_only[, -1]), stringsAsFactors = FALSE)
     colnames(tidy_mat) <- mat_only$.FID
-    rownames(tidy_mat) <- sc
+    rownames(tidy_mat) <- sample_out
 
     tidy_mat[] <- lapply(tidy_mat, function(x) {
       num_val <- suppressWarnings(as.numeric(as.character(x)))
@@ -427,10 +708,53 @@ observeEvent(input$labels_table_cell_edit, {
     })
     tidy_df <- tibble::rownames_to_column(tidy_mat, var = "Sample")
 
-    labs <- try(labels_vec(), silent = TRUE)
-    if (!inherits(labs, "try-error") && !is.null(labs)) {
-      tidy_df <- tibble::add_column(tidy_df, Label = labs, .after = "Sample")
-    }
+    if (isTRUE(input$add_labels)) {
+  labs <- labels_vec()
+
+  validate(
+    need(!is.null(labs), "Label generation failed. Check label settings."),
+    need(
+      length(labs) == nrow(tidy_df),
+      sprintf("Label count (%d) must match number of samples (%d).",
+              length(labs), nrow(tidy_df))
+    )
+  )
+
+  tidy_df <- tibble::add_column(tidy_df, Label = labs, .after = "Sample")
+}
+
+if (isTRUE(input$add_metadata_csv)) {
+  uploaded_meta <- uploaded_metadata_to_add()
+
+  validate(
+    need(
+      nrow(uploaded_meta) == nrow(tidy_df),
+      sprintf("Metadata rows (%d) must match number of samples (%d).",
+              nrow(uploaded_meta), nrow(tidy_df))
+    )
+  )
+
+  uploaded_meta <- as.data.frame(
+    uploaded_meta,
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+
+  names(uploaded_meta) <- make_unique_nonconflicting_names(
+    names(uploaded_meta),
+    existing = names(tidy_df)
+  )
+
+  insert_after <- if ("Label" %in% names(tidy_df)) "Label" else "Sample"
+
+  for (nm in rev(names(uploaded_meta))) {
+    tidy_df <- tibble::add_column(
+      tidy_df,
+      !!!setNames(list(uploaded_meta[[nm]]), nm),
+      .after = insert_after
+    )
+  }
+}
 
     if (isTRUE(input$add_run_order)) {
       insert_after <- if ("Label" %in% names(tidy_df)) "Label" else "Sample"
@@ -444,7 +768,7 @@ observeEvent(input$labels_table_cell_edit, {
       if (length(meta_names) == length(meta_idx) && !any(is.na(meta_idx))) {
         sep <- input$token_sep %||% "_"
         for (i in seq_along(meta_names)) {
-          extracted_vals <- vapply(sc, function(s) {
+          extracted_vals <- vapply(sample_out, function(s) {
             tokens <- unlist(strsplit(s, split = sep, fixed = TRUE))
             if (meta_idx[i] <= length(tokens)) tokens[meta_idx[i]] else "Unknown"
           }, character(1))
@@ -460,18 +784,17 @@ observeEvent(input$labels_table_cell_edit, {
     tidy_df
   })
 
-  metadata_df <- reactive({
-    req(tidy_data())
-    df <- tidy_data()
+metadata_df <- reactive({
+  req(tidy_data(), processed_std())
 
-    # Identify all possible metadata columns
-    meta_cols <- c("Sample", "Order", "Label",
-                   trimws(unlist(strsplit(input$extra_meta_names %||% "", ","))))
+  df <- tidy_data()
+  feature_ids <- as.character(processed_std()$.FID)
 
-    # Subset only the ones that actually exist in the current tidy_df
-    actual_meta_cols <- intersect(meta_cols, names(df))
-    df[, actual_meta_cols, drop = FALSE]
-  })
+  feature_cols <- intersect(names(df), feature_ids)
+  meta_cols <- setdiff(names(df), feature_cols)
+
+  df[, meta_cols, drop = FALSE]
+})
 
   # --- UPDATED: Split export buttons for Tidy CSV/TXT ---
   output$export_ui <- renderUI({
@@ -512,10 +835,24 @@ observeEvent(input$labels_table_cell_edit, {
     content = function(file) { write.table(tidy_data(), file, sep = "\t", row.names = FALSE, quote = TRUE) }
   )
 
-  output$dl_dict <- downloadHandler(
-    filename = function() { req(state$base_name); paste0(state$base_name, "_dictionary.rds") },
-    content = function(file) { saveRDS(list(dictionary = state$dictionary, attributes = state$attributes, base_name = state$base_name, orig_sample_names = sample_cols()), file) }
-  )
+output$dl_dict <- downloadHandler(
+  filename = function() {
+    req(state$base_name)
+    paste0(state$base_name, "_dictionary.rds")
+  },
+  content = function(file) {
+    saveRDS(
+      list(
+        dictionary = state$dictionary,
+        attributes = state$attributes,
+        base_name = state$base_name,
+        orig_sample_names = sample_cols(),
+        sample_name_map = sample_name_map()
+      ),
+      file
+    )
+  }
+)
 
   output$dl_meta_csv <- downloadHandler(
     filename = function() {
@@ -551,7 +888,6 @@ observeEvent(input$labels_table_cell_edit, {
       dict_data <- readRDS(input$dict_file_in$datapath)
       saved_dict <- dict_data$dictionary
       saved_attr <- dict_data$attributes
-      state$restored_sample_names <- dict_data$orig_sample_names
 
       if (!is.null(dict_data$base_name)) {
         state$restore_base_name <- dict_data$base_name
@@ -565,13 +901,29 @@ observeEvent(input$labels_table_cell_edit, {
       samp_col_name <- if ("Sample" %in% names(proc_tidy)) "Sample" else names(proc_tidy)[1]
       sample_names <- proc_tidy[[samp_col_name]]
 
+      sample_names_exported <- as.character(sample_names)
+      sample_names_native <- sample_names_exported
+
+      if (!is.null(dict_data$sample_name_map)) {
+        smap <- as.data.frame(dict_data$sample_name_map, stringsAsFactors = FALSE)
+
+        if (all(c("OriginalSample", "Sample") %in% names(smap))) {
+          mi <- match(sample_names_exported, as.character(smap$Sample))
+          ok <- !is.na(mi)
+
+          sample_names_native[ok] <- as.character(smap$OriginalSample[mi[ok]])
+        }
+      }
+
+      state$restored_sample_names <- sample_names_native
+
       valid_features <- intersect(names(proc_tidy), saved_dict$.FID)
       if (length(valid_features) == 0) stop("No matching feature columns found.")
 
       mat_only <- proc_tidy[, valid_features, drop = FALSE]
 
       restored_mat <- as.data.frame(data.table::transpose(mat_only), stringsAsFactors = FALSE)
-      colnames(restored_mat) <- sample_names
+      colnames(restored_mat) <- sample_names_native
       restored_mat$.FID <- valid_features
 
       rebuilt_df <- dplyr::inner_join(saved_dict, restored_mat, by = ".FID")
@@ -718,69 +1070,87 @@ observeEvent(input$labels_table_cell_edit, {
   # SCRIPT
   # ---------------------------------------------------------
   generated_script <- reactive({
-    req(input$raw_file)
+  req(input$raw_file)
 
-    # Safely evaluate tidy_data so the app doesn't crash on initial load
-    td <- try(tidy_data(), silent = TRUE)
-    req(!inherits(td, "try-error"))
+  td <- try(tidy_data(), silent = TRUE)
+  req(!inherits(td, "try-error"))
 
-    meta_cols <- c("Sample", "Order", "Label",
-                   trimws(unlist(strsplit(input$extra_meta_names %||% "", ","))))
+  # Detect all metadata columns directly from the final tidy table.
+  # This includes:
+  # Sample
+  # Label
+  # Order
+  # manually extracted metadata
+  # uploaded metadata CSV columns
+  feature_ids_script <- try(as.character(processed_std()$.FID), silent = TRUE)
 
-    has_extra_meta <- isTRUE(input$add_run_order) || isTRUE(input$add_extra_meta)
-    has_label <- isTRUE(input$add_labels)
-
-    base_suffix <- if (has_extra_meta) "_tidy_meta" else if (has_label) "_tidy_label" else "_tidy"
-
-    file_csv <- paste0(state$base_name, base_suffix, ".csv")
-    file_txt <- paste0(state$base_name, base_suffix, ".txt")
-
-    meta_csv <- paste0(state$base_name, "_metadata.csv")
-    meta_txt <- paste0(state$base_name, "_metadata.txt")
-
-    paste0(
-      "# ..................................................................\n",
-      "# Reading OmniPeak Output For: ", state$base_name, " ----", "\n",
-      "# ..................................................................\n\n",
-
-      "# 1. Load Required Packages\n",
-      "if (!require('dplyr', quietly = TRUE)) install.packages('dplyr')\n",
-      "if (!require('readr', quietly = TRUE)) install.packages('readr')\n",
-      "if (!require('tibble', quietly = TRUE)) install.packages('tibble')\n",
-      "library(dplyr)\n",
-      "library(readr)\n",
-      "library(tibble)\n\n",
-
-      "# 2. Load the Tidy dataset and Metadata\n",
-      "# --- If you downloaded the CSV files: ---\n",
-      "df <- read_csv('", file_csv, "', show_col_types = TRUE) %>%\n",
-      "  column_to_rownames('Sample') \n",
-      "meta_df <- read_csv('", meta_csv, "', show_col_types = TRUE) %>%\n",
-      "  column_to_rownames('Sample') \n\n",
-
-      "# --- If you downloaded the TXT files: ---\n",
-      "df <- read_tsv('", file_txt, "', show_col_types = TRUE) %>% \n",
-      "  column_to_rownames('Sample')\n",
-      "meta_df <- read_tsv('", meta_txt, "', show_col_types = TRUE) %>% \n",
-      "  column_to_rownames('Sample')\n\n",
-
-      "# 3. Define Metadata Columns\n",
-      "meta_cols <- c(", paste(shQuote(intersect(meta_cols, names(td))), collapse=", "), ")\n\n",
-
-      "# 4. Data Type Formatting\n",
-      "df <- df %>% mutate(\n",
-      "  across(any_of('Label'), as.factor),\n",
-      "  across(any_of(c('Order', 'Batch')), as.numeric)\n",
-      ")\n",
-      "meta_df <- meta_df %>% mutate(\n",
-      "  across(any_of('Label'), as.factor),\n",
-      "  across(any_of(c('Order', 'Batch')), as.numeric)\n",
-      ")\n\n",
-
-      "# 5. Separate Metadata from Peaks for Analysis\n",
-      "peaks <- df %>% select(-any_of(meta_cols))\n\n"
+  if (!inherits(feature_ids_script, "try-error")) {
+    feature_cols_script <- intersect(names(td), feature_ids_script)
+    meta_cols <- setdiff(names(td), feature_cols_script)
+  } else {
+    # fallback
+    meta_cols <- c(
+      "Sample",
+      "Order",
+      "Label",
+      trimws(unlist(strsplit(input$extra_meta_names %||% "", ",")))
     )
-  })
+    meta_cols <- intersect(meta_cols, names(td))
+  }
+
+  meta_cols <- unique(meta_cols)
+  meta_cols <- meta_cols[nzchar(meta_cols)]
+
+  has_extra_meta <- length(setdiff(meta_cols, c("Sample", "Label"))) > 0
+  has_label <- "Label" %in% meta_cols
+
+  base_suffix <- if (has_extra_meta) "_tidy_meta" else if (has_label) "_tidy_label" else "_tidy"
+
+  file_csv <- paste0(state$base_name, base_suffix, ".csv")
+  file_txt <- paste0(state$base_name, base_suffix, ".txt")
+
+  meta_csv <- paste0(state$base_name, "_metadata.csv")
+  meta_txt <- paste0(state$base_name, "_metadata.txt")
+
+  meta_cols_txt <- paste(shQuote(meta_cols), collapse = ", ")
+
+  paste0(
+    "# ..................................................................\n",
+    "# Reading OmniPeak Output For: ", state$base_name, " ----\n",
+    "# ..................................................................\n\n",
+
+    "# 1. Load required packages\n",
+    "if (!require('dplyr', quietly = TRUE)) install.packages('dplyr')\n",
+    "if (!require('readr', quietly = TRUE)) install.packages('readr')\n",
+    "if (!require('tibble', quietly = TRUE)) install.packages('tibble')\n",
+    "library(dplyr)\n",
+    "library(readr)\n",
+    "library(tibble)\n\n",
+
+    "# 2. Load the tidy dataset and metadata\n",
+    "# --- If you downloaded the CSV files: ---\n",
+    "df <- read_csv('", file_csv, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "meta_df <- read_csv('", meta_csv, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "# --- If you downloaded the TXT files: ---\n",
+    "df <- read_tsv('", file_txt, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "meta_df <- read_tsv('", meta_txt, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "# 3. Define metadata columns\n",
+    "meta_cols <- c(", meta_cols_txt, ")\n\n",
+    "meta_cols_no_sample <- setdiff(meta_cols, 'Sample')\n\n",
+
+    "# 4. Separate metadata from peak table\n",
+    "metadata <- df %>% select(any_of(meta_cols_no_sample))\n",
+    "ds <- df %>% select(-any_of(meta_cols_no_sample))\n\n"
+  )
+})
 
   # 2. Update the Ace Editor UI component
   observe({
@@ -803,4 +1173,5 @@ observeEvent(input$labels_table_cell_edit, {
     # Send the generated R script text directly to the JS clipboard function
     js$copyCode(generated_script())
   })
+
 }

@@ -253,3 +253,173 @@ labels_from_sample_names_or_raw <- function(sample_names, token_sep = "_", token
     }
   )
 }
+
+parse_suffix_list <- function(x) {
+  if (is.null(x) || length(x) == 0) return(character(0))
+
+  x <- as.character(x)
+  x <- x[!is.na(x)]
+
+  out <- trimws(unlist(strsplit(x, ",", fixed = TRUE)))
+  out[nzchar(out)]
+}
+
+clean_sample_names_optional <- function(x, enabled = FALSE, remove_suffixes = NULL) {
+  x0 <- as.character(x)
+
+  # Always normalize small hidden differences
+  out <- x0
+  out <- gsub("\u00A0", " ", out, fixed = TRUE)   # non-breaking spaces
+  out <- gsub("[[:space:]]+", " ", out)           # repeated spaces/tabs
+  out <- trimws(out)
+  out <- gsub('^"|"$', "", out)                   # remove wrapping quotes
+
+  if (!isTRUE(enabled)) {
+    return(out)
+  }
+
+  default_suffixes <- c(
+    " Peak area", " Peak Area", "Peak area", "Peak Area",
+    " Peak height", " Peak Height", "Peak height", "Peak Height",
+    "_Area", "_Height",
+    " Area", " Height",
+    ".mzML", ".mzXML", ".raw", ".RAW",
+    ".cdf", ".CDF",
+    ".mzData", ".mzdata",
+    ".wiff", ".WIFF",
+    ".d", ".D"
+  )
+
+  suffixes <- unique(c(parse_suffix_list(remove_suffixes), default_suffixes))
+  suffixes <- suffixes[nzchar(suffixes)]
+
+  strip_one_suffix <- function(v, sfx) {
+    n <- nchar(sfx)
+    if (!is.finite(n) || n < 1) return(v)
+
+    hit <- nchar(v) >= n &
+      tolower(substr(v, nchar(v) - n + 1, nchar(v))) == tolower(sfx)
+
+    v[hit] <- substr(v[hit], 1, nchar(v[hit]) - n)
+    v <- gsub("[[:space:]]+", " ", v)
+    trimws(v)
+  }
+
+  # Repeat until stable, because names can end like:
+  # sample_01.mzML Peak area
+  # first remove "Peak area", then remove ".mzML"
+  for (pass in seq_len(20)) {
+    old <- out
+
+    for (sfx in suffixes) {
+      out <- strip_one_suffix(out, sfx)
+    }
+
+    if (identical(old, out)) break
+  }
+
+  out[!nzchar(out)] <- x0[!nzchar(out)]
+  out
+}
+
+make_sample_name_map <- function(sample_cols,
+                                 clean_enabled = FALSE,
+                                 remove_suffixes = NULL) {
+  cleaned <- clean_sample_names_optional(
+    sample_cols,
+    enabled = clean_enabled,
+    remove_suffixes = remove_suffixes
+  )
+
+  tibble::tibble(
+    OriginalSample = as.character(sample_cols),
+    Sample = make.unique(as.character(cleaned), sep = "_")
+  )
+}
+
+guess_metadata_sample_col <- function(cols) {
+  candidates <- c(
+    "Sample", "sample",
+    "SampleName", "sample_name",
+    "Filename", "FileName", "filename",
+    "File", "Name", "Injection", "Run"
+  )
+
+  hit <- candidates[candidates %in% cols]
+  if (length(hit)) hit[1] else cols[1]
+}
+
+guess_metadata_label_col <- function(cols, sample_col = NULL) {
+  cols2 <- setdiff(cols, sample_col)
+
+  candidates <- c(
+    "Condition", "condition",
+    "Label", "label",
+    "Group", "group",
+    "Treatment", "treatment",
+    "Class", "class"
+  )
+
+  hit <- candidates[candidates %in% cols2]
+  if (length(hit)) hit[1] else cols2[1]
+}
+
+make_unique_nonconflicting_names <- function(nms, existing) {
+  out <- nms
+
+  for (i in seq_along(out)) {
+    if (out[i] %in% existing || out[i] %in% out[seq_len(i - 1)]) {
+      base <- paste0(out[i], "_meta")
+      new <- base
+      k <- 1
+
+      while (new %in% existing || new %in% out[seq_len(i - 1)]) {
+        k <- k + 1
+        new <- paste0(base, "_", k)
+      }
+
+      out[i] <- new
+    }
+  }
+
+  out
+}
+
+omni_status_box <- function(type = c("error", "warning", "success", "info"), text) {
+  type <- match.arg(type)
+
+  col <- switch(
+    type,
+    error   = "#e74c3c",
+    warning = "#f39c12",
+    success = "#18bc9c",
+    info    = "#3498db"
+  )
+
+  bg <- switch(
+    type,
+    error   = "#fdecea",
+    warning = "#fff4e5",
+    success = "#eafaf1",
+    info    = "#eef6fb"
+  )
+
+  ic <- switch(
+    type,
+    error   = "exclamation-triangle",
+    warning = "exclamation-circle",
+    success = "check-circle",
+    info    = "info-circle"
+  )
+
+  div(
+    style = paste0(
+      "background:", bg, ";",
+      "border-left:5px solid ", col, ";",
+      "padding:10px; margin-top:10px; margin-bottom:10px;",
+      "border-radius:5px; color:#2c3e50; font-weight:bold;"
+    ),
+    icon(ic),
+    tags$span(style = "margin-left:6px;", text)
+  )
+}
