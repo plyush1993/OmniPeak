@@ -5,6 +5,10 @@
 # options(rsconnect.http.timeout = 600)
 # rsconnect::deployApp()
 
+# app.R --------------------------------------------------------------------
+# OmniPeak for peak table reshaping
+# -------------------------------------------------------------------------
+
 library(shiny)
 library(vroom)
 library(DT)
@@ -278,6 +282,176 @@ labels_from_sample_names_or_raw <- function(sample_names, token_sep = "_", token
   )
 }
 
+parse_suffix_list <- function(x) {
+  if (is.null(x) || length(x) == 0) return(character(0))
+
+  x <- as.character(x)
+  x <- x[!is.na(x)]
+
+  out <- trimws(unlist(strsplit(x, ",", fixed = TRUE)))
+  out[nzchar(out)]
+}
+
+clean_sample_names_optional <- function(x, enabled = FALSE, remove_suffixes = NULL) {
+  x0 <- as.character(x)
+
+  # Always normalize small hidden differences
+  out <- x0
+  out <- gsub("\u00A0", " ", out, fixed = TRUE)   # non-breaking spaces
+  out <- gsub("[[:space:]]+", " ", out)           # repeated spaces/tabs
+  out <- trimws(out)
+  out <- gsub('^"|"$', "", out)                   # remove wrapping quotes
+
+  if (!isTRUE(enabled)) {
+    return(out)
+  }
+
+  default_suffixes <- c(
+    " Peak area", " Peak Area", "Peak area", "Peak Area",
+    " Peak height", " Peak Height", "Peak height", "Peak Height",
+    "_Area", "_Height",
+    " Area", " Height",
+    ".mzML", ".mzXML", ".raw", ".RAW",
+    ".cdf", ".CDF",
+    ".mzData", ".mzdata",
+    ".wiff", ".WIFF",
+    ".d", ".D"
+  )
+
+  suffixes <- unique(c(parse_suffix_list(remove_suffixes), default_suffixes))
+  suffixes <- suffixes[nzchar(suffixes)]
+
+  strip_one_suffix <- function(v, sfx) {
+    n <- nchar(sfx)
+    if (!is.finite(n) || n < 1) return(v)
+
+    hit <- nchar(v) >= n &
+      tolower(substr(v, nchar(v) - n + 1, nchar(v))) == tolower(sfx)
+
+    v[hit] <- substr(v[hit], 1, nchar(v[hit]) - n)
+    v <- gsub("[[:space:]]+", " ", v)
+    trimws(v)
+  }
+
+  # Repeat until stable, because names can end like:
+  # sample_01.mzML Peak area
+  # first remove "Peak area", then remove ".mzML"
+  for (pass in seq_len(20)) {
+    old <- out
+
+    for (sfx in suffixes) {
+      out <- strip_one_suffix(out, sfx)
+    }
+
+    if (identical(old, out)) break
+  }
+
+  out[!nzchar(out)] <- x0[!nzchar(out)]
+  out
+}
+
+make_sample_name_map <- function(sample_cols,
+                                 clean_enabled = FALSE,
+                                 remove_suffixes = NULL) {
+  cleaned <- clean_sample_names_optional(
+    sample_cols,
+    enabled = clean_enabled,
+    remove_suffixes = remove_suffixes
+  )
+
+  tibble::tibble(
+    OriginalSample = as.character(sample_cols),
+    Sample = make.unique(as.character(cleaned), sep = "_")
+  )
+}
+
+guess_metadata_sample_col <- function(cols) {
+  candidates <- c(
+    "Sample", "sample",
+    "SampleName", "sample_name",
+    "Filename", "FileName", "filename",
+    "File", "Name", "Injection", "Run"
+  )
+
+  hit <- candidates[candidates %in% cols]
+  if (length(hit)) hit[1] else cols[1]
+}
+
+guess_metadata_label_col <- function(cols, sample_col = NULL) {
+  cols2 <- setdiff(cols, sample_col)
+
+  candidates <- c(
+    "Condition", "condition",
+    "Label", "label",
+    "Group", "group",
+    "Treatment", "treatment",
+    "Class", "class"
+  )
+
+  hit <- candidates[candidates %in% cols2]
+  if (length(hit)) hit[1] else cols2[1]
+}
+
+make_unique_nonconflicting_names <- function(nms, existing) {
+  out <- nms
+
+  for (i in seq_along(out)) {
+    if (out[i] %in% existing || out[i] %in% out[seq_len(i - 1)]) {
+      base <- paste0(out[i], "_meta")
+      new <- base
+      k <- 1
+
+      while (new %in% existing || new %in% out[seq_len(i - 1)]) {
+        k <- k + 1
+        new <- paste0(base, "_", k)
+      }
+
+      out[i] <- new
+    }
+  }
+
+  out
+}
+
+omni_status_box <- function(type = c("error", "warning", "success", "info"), text) {
+  type <- match.arg(type)
+
+  col <- switch(
+    type,
+    error   = "#e74c3c",
+    warning = "#f39c12",
+    success = "#18bc9c",
+    info    = "#3498db"
+  )
+
+  bg <- switch(
+    type,
+    error   = "#fdecea",
+    warning = "#fff4e5",
+    success = "#eafaf1",
+    info    = "#eef6fb"
+  )
+
+  ic <- switch(
+    type,
+    error   = "exclamation-triangle",
+    warning = "exclamation-circle",
+    success = "check-circle",
+    info    = "info-circle"
+  )
+
+  div(
+    style = paste0(
+      "background:", bg, ";",
+      "border-left:5px solid ", col, ";",
+      "padding:10px; margin-top:10px; margin-bottom:10px;",
+      "border-radius:5px; color:#2c3e50; font-weight:bold;"
+    ),
+    icon(ic),
+    tags$span(style = "margin-left:6px;", text)
+  )
+}
+
 #..........................................
 # UI ----
 #..........................................
@@ -300,6 +474,37 @@ ui <- fluidPage(
       font-weight: bold;
     }
   ")),
+  
+  tags$style(HTML("
+  .source-box {
+    background: #ffffff;
+    border: 1px solid #dfe6e9;
+    border-left: 5px solid #007BA7;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+
+  .source-box-metadata {
+    border-left-color: #18bc9c;
+  }
+
+  .source-box-samplename {
+    border-left-color: #3498db;
+  }
+
+  .source-box-title {
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 5px;
+  }
+
+  .source-box-text {
+    font-size: 14px;
+    color: #555;
+    margin-bottom: 0;
+  }
+")),
   
   tags$head(tags$style(HTML("
   /* Editable Labels table: prevent white-on-white editing issue */
@@ -449,74 +654,169 @@ ui <- fluidPage(
       uiOutput("global_controls"),
       
       tags$hr(),
-      h3(class = "highlight", "2. Metadata & Labels"),
-      
-      prettyCheckbox("add_labels", "Add Label Column", value = TRUE, icon = icon("check"), status = "primary", animation = "jelly"),
-      conditionalPanel(
-        condition = "input.add_labels",
-        radioButtons(
-  "label_source",
-  "Label source:",
-  c(
-    "From sample names" = "from_rows",
-    "From custom CSV" = "from_custom",
-    "Manual editable table" = "manual"
+h3(class = "highlight", "2. Metadata & Labels"),
+
+div(
+  class = "source-box source-box-metadata",
+
+  div(class = "source-box-title", "Source: metadata file"),
+
+prettyCheckbox(
+  "add_metadata_csv",
+  "Add metadata from CSV",
+  value = FALSE,
+  status = "primary",
+  icon = icon("check"),
+  animation = "jelly"
+),
+
+conditionalPanel(
+  condition = "input.add_metadata_csv == true || (input.add_labels == true && input.label_source == 'from_metadata')",
+
+  fileInput(
+    "metadata_csv",
+    "Upload metadata CSV with column names",
+    accept = ".csv"
   ),
-  selected = "from_rows"
-),
 
-conditionalPanel(
-  condition = "input.label_source == 'from_rows' || input.label_source == 'manual'",
-  numericInput("token_idx", "Main Label Token index", value = 2, min = 1),
-  textInput("token_sep", "Token separator (used for all name parsing)", value = "_")
-),
+  uiOutput("metadata_sample_col_ui"),
+  uiOutput("metadata_label_col_ui"),
 
-conditionalPanel(
-  condition = "input.label_source == 'from_custom'",
-  fileInput("meta_csv", "Upload labels CSV", accept = ".csv")
-),
+  tags$hr(style = "margin-top: 10px; margin-bottom: 15px;"),
+  h4("Sample Name Cleaning", style = "margin-top:0px; font-weight:bold;"),
 
-conditionalPanel(
-  condition = "input.label_source == 'manual'",
+  prettyCheckbox(
+    "clean_sample_names_export",
+    "Clean sample names",
+    value = FALSE,
+    status = "primary",
+    icon = icon("check"),
+    animation = "jelly"
+  ),
 
-  div(
-    style = "display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px;",
+  conditionalPanel(
+    condition = "input.clean_sample_names_export == true",
 
-    actionButton(
-      "fill_manual_labels",
-      label = tags$span(
-        HTML("Fill editable table from<br>current token labels"),
-        style = "line-height: 1.1;"
+    selectizeInput(
+      "sample_remove_suffixes",
+      "Remove suffixes/extensions:",
+      choices = c(
+        ".mzML", ".mzXML", ".raw", ".RAW",
+        ".cdf", ".CDF",
+        ".mzData", ".mzdata",
+        ".wiff", ".WIFF",
+        ".d", ".D",
+        " Peak area", " Peak Area",
+        " Peak height", " Peak Height",
+        "_Area", "_Height",
+        " Area", " Height"
       ),
-      class = "btn-primary",
-      style = "
-        font-size: 12px;
-        padding: 4px 8px;
-        line-height: 1.1;
-        width: 145px;
-        white-space: normal;
-      "
+      selected = c(
+        " Peak area", " Peak height",
+        "_Area", "_Height",
+        " Area", " Height"
+      ),
+      multiple = TRUE,
+      options = list(
+        create = TRUE,
+        createOnBlur = TRUE,
+        placeholder = "Type custom suffix and press Enter"
+      )
     )
   ),
 
-  div(
-    class = "help-block",
-    "Double-click cells in the Label column to edit group names."
+uiOutput("metadata_match_message")
+)),
+
+tags$hr(),
+
+div(
+  class = "source-box source-box-samplename",
+  div(class = "source-box-title", "Source: sample names or selected column"),
+  
+prettyCheckbox(
+  "add_labels",
+  "Add Label Column",
+  value = FALSE,
+  icon = icon("check"),
+  status = "primary",
+  animation = "jelly"
+),
+
+conditionalPanel(
+  condition = "input.add_labels",
+
+   radioButtons(
+      "label_source",
+      "Label source:",
+      choiceNames = list(
+        HTML("<b>From sample names</b><br><span style='font-size:12px;color:#666;'>Parse labels from file/sample names using tokens.</span>"),
+        HTML("<b>From uploaded metadata column</b><br><span style='font-size:12px;color:#666;'>Select one metadata file column from above as Label.</span>"),
+        HTML("<b>From custom one-column CSV</b><br><span style='font-size:12px;color:#666;'>One label per sample, same order as detected samples.</span>"),
+        HTML("<b>Manual editable table</b><br><span style='font-size:12px;color:#666;'>Edit labels directly in the app.</span>")
+      ),
+      choiceValues = c(
+        "from_rows",
+        "from_metadata",
+        "from_custom",
+        "manual"
+      ),
+      selected = "from_rows"
+    ),
+
+  uiOutput("label_message"),
+  
+  conditionalPanel(
+    condition = "input.label_source == 'from_rows' || input.label_source == 'manual'",
+    numericInput("token_idx", "Main Label Token index", value = 2, min = 1),
+    textInput("token_sep", "Token separator (used for all name parsing)", value = "_")
   ),
 
-  tags$hr(),
-  DTOutput("labels_table")
+  conditionalPanel(
+    condition = "input.label_source == 'from_custom'",
+    fileInput("meta_csv", "Upload labels CSV", accept = ".csv")
+  ),
+
+  conditionalPanel(
+    condition = "input.label_source == 'manual'",
+
+    div(
+      style = "display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px;",
+
+      actionButton(
+        "fill_manual_labels",
+        label = tags$span(
+          HTML("Fill editable table from<br>current token labels"),
+          style = "line-height: 1.1;"
+        ),
+        class = "btn-primary",
+        style = "
+          font-size: 12px;
+          padding: 4px 8px;
+          line-height: 1.1;
+          width: 145px;
+          white-space: normal;
+        "
+      )
+    ),
+
+    div(
+      class = "help-block",
+      "Double-click cells in the Label column to edit group names."
+    ),
+
+    tags$hr(),
+    DTOutput("labels_table")
+  )
 ),
-      ),
       
-      tags$br(),
       prettyCheckbox("add_run_order", "Add Order by Sequence", value = FALSE, status = "primary", icon = icon("check"), animation = "jelly"),
       prettyCheckbox("add_extra_meta", "Extract Extra Variables", value = FALSE, status = "primary", icon = icon("check"), animation = "jelly"),
       conditionalPanel(
         condition = "input.add_extra_meta",
         textInput("extra_meta_names", "Variable Name(s) (comma-separated):", placeholder = "Batch, Genotype"),
         textInput("extra_meta_indices", "Token Index(es) (comma-separated):", placeholder = "1, 4")
-      ),
+      )),
       
       tags$hr(),
       h3(class = "highlight", "3. Export Data"),
@@ -598,53 +898,86 @@ conditionalPanel(
   ),
 
   p(
-    style = "margin-bottom: 8px;",
-    "Add a ",
-    tags$code("Label"),
-    " column and optional metadata columns to the exported tidy table. Labels can be extracted directly from sample names, uploaded as a custom ",
-    tags$code(".csv"),
-    " file, or manually corrected using the editable label table."
-  ),
+  style = "margin-bottom: 10px;",
+  "Use this section to add sample information to the exported tidy table. ",
+  "Metadata columns and the ",
+  tags$code("Label"),
+  " column are related, but they are not the same."
+),
 
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Metadata from CSV", style = "color:#18bc9c;"),
   p(
-    style = "margin-bottom: 8px;",
-    tags$b("From sample names: ", style = "color: #d35400;"),
-    "Define a token separator, for example ",
-    tags$code("_"),
-    ", and choose which token index represents the sample label. ",
-    "The same separator is also used for optional extra variables such as Batch, Genotype, or Treatment."
-  ),
-
-  p(
-    style = "margin-bottom: 8px;",
-    tags$b("Example: ", style = "color: #d35400;"),
-    "for sample name ",
-    tags$code("B1_KO_Sample_A"),
-    " with separator ",
-    tags$code("_"),
-    ", token index 2 gives label ",
-    tags$code("KO"),
-    ". Token index 1 could be used as Batch ",
-    tags$code("B1"),
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "Upload a metadata table with column names and one sample-name column. ",
+    "OmniPeak matches rows by sample name and adds the remaining columns to the tidy output, for example ",
+    tags$code("Condition"),
+    ", ",
+    tags$code("Batch"),
+    ", ",
+    tags$code("Patient"),
+    ", or ",
+    tags$code("Timepoint"),
     "."
-  ),
-
-  p(
-    style = "margin-bottom: 8px;",
-    tags$b("Custom CSV: ", style = "color: #d35400;"),
-    "Upload a one-column ",
-    tags$code(".csv"),
-    " file without a header. The number and order of labels must match the detected sample columns."
-  ),
-
-  p(
-    style = "margin-bottom: 0;",
-    tags$b("Manual editable table: ", style = "color: #d35400;"),
-    "Use this option to fill the label table from the current token-based labels and then manually correct group names. ",
-    "Double-click cells in the ",
-    tags$code("Label"),
-    " column to edit them. To start from full raw sample names, use a token index larger than the number of available tokens; the app will fall back to the full sample name."
   )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Labels from sample names", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "The optional ",
+    tags$code("Label"),
+    " column can be parsed directly from sample names using a separator and token index. ",
+    "This is useful when group names are already encoded in the file names."
+  )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Labels from metadata", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "Alternatively, the ",
+    tags$code("Label"),
+    " column can be taken from one selected column in the uploaded metadata table, for example ",
+    tags$code("Condition"),
+    " or ",
+    tags$code("Treatment"),
+    "."
+  )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Order and extra variables from sample names", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "You can also add ",
+    tags$code("Order"),
+    " by detected sample sequence and extract additional variables directly from sample names, such as ",
+    tags$code("Batch"),
+    ", ",
+    tags$code("Genotype"),
+    ", or ",
+    tags$code("Treatment"),
+    ", using token indices."
+  )
+),
+
+p(
+  style = "margin-bottom: 0;",
+  tags$b("Optional cleaning: ", style = "color: #18bc9c;"),
+  "Use sample-name cleaning only when sample names in the peak table and metadata file differ by suffixes such as ",
+  tags$code(".mzML"),
+  ", ",
+  tags$code("Peak area"),
+  ", or ",
+  tags$code("_Area"),
+  "."
+)
 ),
             
             div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #008B8B; padding: 15px; margin-bottom: 15px;",
@@ -668,7 +1001,6 @@ conditionalPanel(
             tags$br(), tags$br()
           )
         ))
-      
       
     )
   )
@@ -860,7 +1192,7 @@ server <- function(input, output, session) {
         condition = "input.sample_mode == 'manual'",
         selectizeInput("sample_cols_manual", "Pick sample columns:",
                        choices = cols, selected = NULL, multiple = TRUE)
-      ),
+      )
     )
   })
   
@@ -925,6 +1257,196 @@ server <- function(input, output, session) {
     sc
   })
   
+  sample_name_map <- reactive({
+  req(sample_cols())
+
+  make_sample_name_map(
+    sample_cols = sample_cols(),
+    clean_enabled = isTRUE(input$clean_sample_names_export),
+    remove_suffixes = input$sample_remove_suffixes %||% ""
+  )
+})
+
+uploaded_metadata_raw <- reactive({
+  req(
+    isTRUE(input$add_metadata_csv) ||
+      (isTRUE(input$add_labels) && identical(input$label_source, "from_metadata")),
+    input$metadata_csv
+  )
+
+  as.data.frame(
+    vroom::vroom(
+      input$metadata_csv$datapath,
+      delim = ",",
+      col_names = TRUE,
+      show_col_types = FALSE
+    ),
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+})
+
+output$metadata_sample_col_ui <- renderUI({
+  req(uploaded_metadata_raw())
+
+  cols <- names(uploaded_metadata_raw())
+
+  selectInput(
+    "metadata_sample_col",
+    "Metadata sample-name column:",
+    choices = cols,
+    selected = guess_metadata_sample_col(cols)
+  )
+})
+
+output$metadata_label_col_ui <- renderUI({
+  req(uploaded_metadata_raw())
+
+  if (!isTRUE(input$add_labels) || !identical(input$label_source, "from_metadata")) {
+    return(NULL)
+  }
+
+  cols <- names(uploaded_metadata_raw())
+
+  sample_col <- input$metadata_sample_col %||% guess_metadata_sample_col(cols)
+
+  choices <- setdiff(cols, sample_col)
+
+  validate(
+    need(length(choices) > 0, "Metadata file has no column available for labels.")
+  )
+
+  selectizeInput(
+    "metadata_label_col",
+    "Metadata column to use as Label/Condition:",
+    choices = choices,
+    selected = guess_metadata_label_col(cols, sample_col),
+    multiple = FALSE,
+    options = list(
+      placeholder = "Select metadata column for labels"
+    )
+  )
+})
+
+uploaded_metadata_aligned <- reactive({
+  req(uploaded_metadata_raw(), sample_name_map(), input$metadata_sample_col)
+
+  meta <- uploaded_metadata_raw()
+  smap <- sample_name_map()
+
+  validate(
+    need(input$metadata_sample_col %in% names(meta),
+         "Selected metadata sample column was not found.")
+  )
+
+  meta_key <- clean_sample_names_optional(
+    meta[[input$metadata_sample_col]],
+    enabled = isTRUE(input$clean_sample_names_export),
+    remove_suffixes = input$sample_remove_suffixes %||% ""
+  )
+
+  app_key <- smap$Sample
+
+  validate(
+    need(!anyDuplicated(meta_key),
+         "Metadata sample names are duplicated after optional cleaning.")
+  )
+
+  idx <- match(app_key, meta_key)
+
+  if (any(is.na(idx))) {
+    missing_samples <- app_key[is.na(idx)]
+
+    validate(
+      need(
+        FALSE,
+        paste0(
+          "Metadata file is missing these sample names: ",
+          paste(head(missing_samples, 10), collapse = ", "),
+          if (length(missing_samples) > 10) " ..." else ""
+        )
+      )
+    )
+  }
+
+  meta[idx, , drop = FALSE]
+})
+
+output$metadata_match_message <- renderUI({
+  active <- isTRUE(input$add_metadata_csv) ||
+    (isTRUE(input$add_labels) && identical(input$label_source, "from_metadata"))
+
+  if (!active) return(NULL)
+
+  if (is.null(input$raw_file)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a peak table first, so OmniPeak can detect sample names."
+    ))
+  }
+
+  if (is.null(input$metadata_csv)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a metadata CSV file with sample names and metadata columns."
+    ))
+  }
+
+  if (is.null(input$metadata_sample_col) || !nzchar(input$metadata_sample_col)) {
+    return(omni_status_box(
+      "warning",
+      "Select the metadata column that contains sample names."
+    ))
+  }
+
+  err <- NULL
+
+  aligned <- tryCatch(
+    uploaded_metadata_aligned(),
+    shiny.silent.error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    },
+    error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    }
+  )
+
+  if (!is.null(err) && nzchar(err)) {
+    return(omni_status_box("error", err))
+  }
+
+  if (!is.null(err)) {
+    return(omni_status_box(
+      "warning",
+      "Metadata cannot be matched yet. Check the selected sample-name column."
+    ))
+  }
+
+  n_meta_cols <- max(0, ncol(aligned) - 1)
+
+  omni_status_box(
+    "success",
+    sprintf(
+      "Metadata matched successfully: %d samples. Metadata columns available: %d.",
+      nrow(aligned),
+      n_meta_cols
+    )
+  )
+})
+
+uploaded_metadata_to_add <- reactive({
+  req(uploaded_metadata_aligned())
+
+  meta <- uploaded_metadata_aligned()
+  sample_col <- input$metadata_sample_col
+
+  meta <- meta[, setdiff(names(meta), sample_col), drop = FALSE]
+
+  as.data.frame(meta, check.names = FALSE, stringsAsFactors = FALSE)
+})
+  
   output$sample_cols_status <- renderUI({
     sc <- try(sample_cols(), silent = TRUE)
     if (!inherits(sc, "try-error")) div(style="color:green; font-weight:bold;", sprintf("Detected %d sample columns.", length(sc)))
@@ -960,19 +1482,21 @@ server <- function(input, output, session) {
   manual_labels <- reactiveVal(NULL)
 
 auto_label_table <- reactive({
-  req(sample_cols())
+  req(sample_name_map())
+
+  smap <- sample_name_map()
 
   make_label_table(
-    sample_cols(),
+    smap$Sample,
     labels_from_sample_names_or_raw(
-      sample_cols(),
+      smap$Sample,
       token_sep = input$token_sep %||% "_",
       token_index = input$token_idx %||% 2
     )
   )
 })
 
-observeEvent(sample_cols(), {
+observeEvent(sample_name_map(), {
   req(auto_label_table())
   manual_labels(auto_label_table())
 }, ignoreInit = FALSE)
@@ -1013,11 +1537,12 @@ observeEvent(input$labels_table_cell_edit, {
   )
 }, ignoreInit = TRUE)
   
- labels_vec <- reactive({
-  req(sample_cols())
+labels_vec <- reactive({
+  req(sample_name_map())
 
   if (!isTRUE(input$add_labels)) return(NULL)
 
+  smap <- sample_name_map()
   src <- input$label_source %||% "from_rows"
 
   if (identical(src, "from_custom")) {
@@ -1033,10 +1558,30 @@ observeEvent(input$labels_table_cell_edit, {
       dplyr::pull(1)
 
     validate(
-      need(length(vec) == length(sample_cols()), "Label count mismatch.")
+      need(length(vec) == nrow(smap), "Label count mismatch.")
     )
 
     trimws(as.character(vec))
+
+  } else if (identical(src, "from_metadata")) {
+
+    req(uploaded_metadata_aligned(), input$metadata_label_col)
+
+    meta <- uploaded_metadata_aligned()
+
+    validate(
+      need(input$metadata_label_col %in% names(meta),
+           "Selected metadata label column was not found.")
+    )
+
+    vec <- trimws(as.character(meta[[input$metadata_label_col]]))
+
+    validate(
+      need(!any(is.na(vec) | vec == ""),
+           "Selected metadata label column contains empty values.")
+    )
+
+    vec
 
   } else if (identical(src, "manual")) {
 
@@ -1044,10 +1589,10 @@ observeEvent(input$labels_table_cell_edit, {
     req(tbl)
 
     validate(
-      need(nrow(tbl) == length(sample_cols()),
+      need(nrow(tbl) == nrow(smap),
            "Manual label table must match the number of samples."),
-      need(identical(as.character(tbl$Sample), as.character(sample_cols())),
-           "Manual label table does not match current sample columns."),
+      need(identical(as.character(tbl$Sample), as.character(smap$Sample)),
+           "Manual label table does not match current sample names."),
       need(!any(is.na(tbl$Label) | trimws(tbl$Label) == ""),
            "All samples must have labels.")
     )
@@ -1057,11 +1602,77 @@ observeEvent(input$labels_table_cell_edit, {
   } else {
 
     labels_from_sample_names(
-      sample_cols(),
+      smap$Sample,
       token_sep = input$token_sep,
       token_index = input$token_idx
     )
   }
+})
+
+output$label_message <- renderUI({
+  if (!isTRUE(input$add_labels)) return(NULL)
+
+  src <- input$label_source %||% "from_rows"
+
+  if (identical(src, "from_custom") && is.null(input$meta_csv)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a one-column labels CSV file, one label per detected sample."
+    ))
+  }
+
+  if (identical(src, "from_metadata") && is.null(input$metadata_csv)) {
+    return(omni_status_box(
+      "warning",
+      "Upload a metadata CSV file first, then choose a metadata column for Label."
+    ))
+  }
+
+  if (identical(src, "from_metadata") &&
+      (is.null(input$metadata_label_col) || !nzchar(input$metadata_label_col))) {
+    return(omni_status_box(
+      "warning",
+      "Select the metadata column to use as Label/Condition."
+    ))
+  }
+
+  err <- NULL
+
+  vec <- tryCatch(
+    labels_vec(),
+    shiny.silent.error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    },
+    error = function(e) {
+      err <<- conditionMessage(e)
+      NULL
+    }
+  )
+
+  if (!is.null(err) && nzchar(err)) {
+    return(omni_status_box("error", err))
+  }
+
+  if (!is.null(err) || is.null(vec)) return(NULL)
+
+  vec <- trimws(as.character(vec))
+
+  if (any(is.na(vec) | vec == "")) {
+    return(omni_status_box(
+      "error",
+      "Some labels are empty. Check token parsing, metadata column, custom CSV, or manual table."
+    ))
+  }
+
+  omni_status_box(
+    "success",
+    sprintf(
+      "Labels ready: %d samples, %d unique label(s).",
+      length(vec),
+      length(unique(vec))
+    )
+  )
 })
 
   # ---------------------------------------------------------
@@ -1077,7 +1688,9 @@ observeEvent(input$labels_table_cell_edit, {
     on.exit(waiter_hide())
     
     df <- processed_std()
-    sc <- sample_cols()
+    smap <- sample_name_map()
+    sc <- smap$OriginalSample
+    sample_out <- smap$Sample
     
     meta_cols <- setdiff(names(df), sc)
     state$dictionary <- df[, meta_cols, drop = FALSE]
@@ -1085,7 +1698,7 @@ observeEvent(input$labels_table_cell_edit, {
     mat_only <- df[, c(".FID", sc), drop = FALSE]
     tidy_mat <- as.data.frame(data.table::transpose(mat_only[, -1]), stringsAsFactors = FALSE)
     colnames(tidy_mat) <- mat_only$.FID
-    rownames(tidy_mat) <- sc
+    rownames(tidy_mat) <- sample_out
     
     tidy_mat[] <- lapply(tidy_mat, function(x) {
       num_val <- suppressWarnings(as.numeric(as.character(x)))
@@ -1094,10 +1707,53 @@ observeEvent(input$labels_table_cell_edit, {
     })
     tidy_df <- tibble::rownames_to_column(tidy_mat, var = "Sample")
     
-    labs <- try(labels_vec(), silent = TRUE)
-    if (!inherits(labs, "try-error") && !is.null(labs)) {
-      tidy_df <- tibble::add_column(tidy_df, Label = labs, .after = "Sample")
-    }
+    if (isTRUE(input$add_labels)) {
+  labs <- labels_vec()
+
+  validate(
+    need(!is.null(labs), "Label generation failed. Check label settings."),
+    need(
+      length(labs) == nrow(tidy_df),
+      sprintf("Label count (%d) must match number of samples (%d).",
+              length(labs), nrow(tidy_df))
+    )
+  )
+
+  tidy_df <- tibble::add_column(tidy_df, Label = labs, .after = "Sample")
+}
+    
+if (isTRUE(input$add_metadata_csv)) {
+  uploaded_meta <- uploaded_metadata_to_add()
+
+  validate(
+    need(
+      nrow(uploaded_meta) == nrow(tidy_df),
+      sprintf("Metadata rows (%d) must match number of samples (%d).",
+              nrow(uploaded_meta), nrow(tidy_df))
+    )
+  )
+
+  uploaded_meta <- as.data.frame(
+    uploaded_meta,
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+
+  names(uploaded_meta) <- make_unique_nonconflicting_names(
+    names(uploaded_meta),
+    existing = names(tidy_df)
+  )
+
+  insert_after <- if ("Label" %in% names(tidy_df)) "Label" else "Sample"
+
+  for (nm in rev(names(uploaded_meta))) {
+    tidy_df <- tibble::add_column(
+      tidy_df,
+      !!!setNames(list(uploaded_meta[[nm]]), nm),
+      .after = insert_after
+    )
+  }
+}
     
     if (isTRUE(input$add_run_order)) {
       insert_after <- if ("Label" %in% names(tidy_df)) "Label" else "Sample"
@@ -1111,7 +1767,7 @@ observeEvent(input$labels_table_cell_edit, {
       if (length(meta_names) == length(meta_idx) && !any(is.na(meta_idx))) {
         sep <- input$token_sep %||% "_"
         for (i in seq_along(meta_names)) {
-          extracted_vals <- vapply(sc, function(s) {
+          extracted_vals <- vapply(sample_out, function(s) {
             tokens <- unlist(strsplit(s, split = sep, fixed = TRUE))
             if (meta_idx[i] <= length(tokens)) tokens[meta_idx[i]] else "Unknown"
           }, character(1))
@@ -1127,18 +1783,17 @@ observeEvent(input$labels_table_cell_edit, {
     tidy_df
   })
   
-  metadata_df <- reactive({
-    req(tidy_data())
-    df <- tidy_data()
-    
-    # Identify all possible metadata columns
-    meta_cols <- c("Sample", "Order", "Label", 
-                   trimws(unlist(strsplit(input$extra_meta_names %||% "", ","))))
-    
-    # Subset only the ones that actually exist in the current tidy_df
-    actual_meta_cols <- intersect(meta_cols, names(df))
-    df[, actual_meta_cols, drop = FALSE]
-  })
+metadata_df <- reactive({
+  req(tidy_data(), processed_std())
+
+  df <- tidy_data()
+  feature_ids <- as.character(processed_std()$.FID)
+
+  feature_cols <- intersect(names(df), feature_ids)
+  meta_cols <- setdiff(names(df), feature_cols)
+
+  df[, meta_cols, drop = FALSE]
+})
   
   # --- UPDATED: Split export buttons for Tidy CSV/TXT ---
   output$export_ui <- renderUI({
@@ -1179,10 +1834,24 @@ observeEvent(input$labels_table_cell_edit, {
     content = function(file) { write.table(tidy_data(), file, sep = "\t", row.names = FALSE, quote = TRUE) }
   )
   
-  output$dl_dict <- downloadHandler(
-    filename = function() { req(state$base_name); paste0(state$base_name, "_dictionary.rds") },
-    content = function(file) { saveRDS(list(dictionary = state$dictionary, attributes = state$attributes, base_name = state$base_name, orig_sample_names = sample_cols()), file) }
-  )
+output$dl_dict <- downloadHandler(
+  filename = function() {
+    req(state$base_name)
+    paste0(state$base_name, "_dictionary.rds")
+  },
+  content = function(file) {
+    saveRDS(
+      list(
+        dictionary = state$dictionary,
+        attributes = state$attributes,
+        base_name = state$base_name,
+        orig_sample_names = sample_cols(),
+        sample_name_map = sample_name_map()
+      ),
+      file
+    )
+  }
+)
   
   output$dl_meta_csv <- downloadHandler(
     filename = function() {
@@ -1218,7 +1887,6 @@ observeEvent(input$labels_table_cell_edit, {
       dict_data <- readRDS(input$dict_file_in$datapath)
       saved_dict <- dict_data$dictionary
       saved_attr <- dict_data$attributes
-      state$restored_sample_names <- dict_data$orig_sample_names
       
       if (!is.null(dict_data$base_name)) {
         state$restore_base_name <- dict_data$base_name
@@ -1232,13 +1900,29 @@ observeEvent(input$labels_table_cell_edit, {
       samp_col_name <- if ("Sample" %in% names(proc_tidy)) "Sample" else names(proc_tidy)[1]
       sample_names <- proc_tidy[[samp_col_name]]
       
+      sample_names_exported <- as.character(sample_names)
+      sample_names_native <- sample_names_exported
+      
+      if (!is.null(dict_data$sample_name_map)) {
+        smap <- as.data.frame(dict_data$sample_name_map, stringsAsFactors = FALSE)
+      
+        if (all(c("OriginalSample", "Sample") %in% names(smap))) {
+          mi <- match(sample_names_exported, as.character(smap$Sample))
+          ok <- !is.na(mi)
+      
+          sample_names_native[ok] <- as.character(smap$OriginalSample[mi[ok]])
+        }
+      }
+      
+      state$restored_sample_names <- sample_names_native
+      
       valid_features <- intersect(names(proc_tidy), saved_dict$.FID)
       if (length(valid_features) == 0) stop("No matching feature columns found.")
       
       mat_only <- proc_tidy[, valid_features, drop = FALSE]
       
       restored_mat <- as.data.frame(data.table::transpose(mat_only), stringsAsFactors = FALSE)
-      colnames(restored_mat) <- sample_names
+      colnames(restored_mat) <- sample_names_native
       restored_mat$.FID <- valid_features
       
       rebuilt_df <- dplyr::inner_join(saved_dict, restored_mat, by = ".FID")
@@ -1385,69 +2069,87 @@ observeEvent(input$labels_table_cell_edit, {
   # SCRIPT
   # ---------------------------------------------------------
   generated_script <- reactive({
-    req(input$raw_file)
-    
-    # Safely evaluate tidy_data so the app doesn't crash on initial load
-    td <- try(tidy_data(), silent = TRUE)
-    req(!inherits(td, "try-error"))
-    
-    meta_cols <- c("Sample", "Order", "Label", 
-                   trimws(unlist(strsplit(input$extra_meta_names %||% "", ","))))
-    
-    has_extra_meta <- isTRUE(input$add_run_order) || isTRUE(input$add_extra_meta)
-    has_label <- isTRUE(input$add_labels)
-    
-    base_suffix <- if (has_extra_meta) "_tidy_meta" else if (has_label) "_tidy_label" else "_tidy"
-    
-    file_csv <- paste0(state$base_name, base_suffix, ".csv")
-    file_txt <- paste0(state$base_name, base_suffix, ".txt")
-    
-    meta_csv <- paste0(state$base_name, "_metadata.csv")
-    meta_txt <- paste0(state$base_name, "_metadata.txt")
-    
-    paste0(
-      "# ..................................................................\n",
-      "# Reading OmniPeak Output For: ", state$base_name, " ----", "\n",
-      "# ..................................................................\n\n",
+  req(input$raw_file)
 
-      "# 1. Load Required Packages\n",
-      "if (!require('dplyr', quietly = TRUE)) install.packages('dplyr')\n",
-      "if (!require('readr', quietly = TRUE)) install.packages('readr')\n",
-      "if (!require('tibble', quietly = TRUE)) install.packages('tibble')\n",
-      "library(dplyr)\n",
-      "library(readr)\n",
-      "library(tibble)\n\n",
-      
-      "# 2. Load the Tidy dataset and Metadata\n",
-      "# --- If you downloaded the CSV files: ---\n",
-      "df <- read_csv('", file_csv, "', show_col_types = TRUE) %>%\n",
-      "  column_to_rownames('Sample') \n",
-      "meta_df <- read_csv('", meta_csv, "', show_col_types = TRUE) %>%\n",
-      "  column_to_rownames('Sample') \n\n",
-      
-      "# --- If you downloaded the TXT files: ---\n",
-      "df <- read_tsv('", file_txt, "', show_col_types = TRUE) %>% \n",
-      "  column_to_rownames('Sample')\n",
-      "meta_df <- read_tsv('", meta_txt, "', show_col_types = TRUE) %>% \n",
-      "  column_to_rownames('Sample')\n\n",
-      
-      "# 3. Define Metadata Columns\n",
-      "meta_cols <- c(", paste(shQuote(intersect(meta_cols, names(td))), collapse=", "), ")\n\n",
-      
-      "# 4. Data Type Formatting\n",
-      "df <- df %>% mutate(\n",
-      "  across(any_of('Label'), as.factor),\n",
-      "  across(any_of(c('Order', 'Batch')), as.numeric)\n",
-      ")\n",
-      "meta_df <- meta_df %>% mutate(\n",
-      "  across(any_of('Label'), as.factor),\n",
-      "  across(any_of(c('Order', 'Batch')), as.numeric)\n",
-      ")\n\n",
-      
-      "# 5. Separate Metadata from Peaks for Analysis\n",
-      "peaks <- df %>% select(-any_of(meta_cols))\n\n"
+  td <- try(tidy_data(), silent = TRUE)
+  req(!inherits(td, "try-error"))
+
+  # Detect all metadata columns directly from the final tidy table.
+  # This includes:
+  # Sample
+  # Label
+  # Order
+  # manually extracted metadata
+  # uploaded metadata CSV columns
+  feature_ids_script <- try(as.character(processed_std()$.FID), silent = TRUE)
+
+  if (!inherits(feature_ids_script, "try-error")) {
+    feature_cols_script <- intersect(names(td), feature_ids_script)
+    meta_cols <- setdiff(names(td), feature_cols_script)
+  } else {
+    # fallback
+    meta_cols <- c(
+      "Sample",
+      "Order",
+      "Label",
+      trimws(unlist(strsplit(input$extra_meta_names %||% "", ",")))
     )
-  })
+    meta_cols <- intersect(meta_cols, names(td))
+  }
+
+  meta_cols <- unique(meta_cols)
+  meta_cols <- meta_cols[nzchar(meta_cols)]
+
+  has_extra_meta <- length(setdiff(meta_cols, c("Sample", "Label"))) > 0
+  has_label <- "Label" %in% meta_cols
+
+  base_suffix <- if (has_extra_meta) "_tidy_meta" else if (has_label) "_tidy_label" else "_tidy"
+
+  file_csv <- paste0(state$base_name, base_suffix, ".csv")
+  file_txt <- paste0(state$base_name, base_suffix, ".txt")
+
+  meta_csv <- paste0(state$base_name, "_metadata.csv")
+  meta_txt <- paste0(state$base_name, "_metadata.txt")
+
+  meta_cols_txt <- paste(shQuote(meta_cols), collapse = ", ")
+
+  paste0(
+    "# ..................................................................\n",
+    "# Reading OmniPeak Output For: ", state$base_name, " ----\n",
+    "# ..................................................................\n\n",
+
+    "# 1. Load required packages\n",
+    "if (!require('dplyr', quietly = TRUE)) install.packages('dplyr')\n",
+    "if (!require('readr', quietly = TRUE)) install.packages('readr')\n",
+    "if (!require('tibble', quietly = TRUE)) install.packages('tibble')\n",
+    "library(dplyr)\n",
+    "library(readr)\n",
+    "library(tibble)\n\n",
+
+    "# 2. Load the tidy dataset and metadata\n",
+    "# --- If you downloaded the CSV files: ---\n",
+    "df <- read_csv('", file_csv, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "meta_df <- read_csv('", meta_csv, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "# --- If you downloaded the TXT files: ---\n",
+    "df <- read_tsv('", file_txt, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "meta_df <- read_tsv('", meta_txt, "', show_col_types = TRUE) %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "# 3. Define metadata columns\n",
+    "meta_cols <- c(", meta_cols_txt, ")\n\n",
+    "meta_cols_no_sample <- setdiff(meta_cols, 'Sample')\n\n",
+
+    "# 4. Separate metadata from peak table\n",
+    "metadata <- df %>% select(any_of(meta_cols_no_sample))\n",
+    "ds <- df %>% select(-any_of(meta_cols_no_sample))\n\n"
+  )
+})
   
   # 2. Update the Ace Editor UI component
   observe({
