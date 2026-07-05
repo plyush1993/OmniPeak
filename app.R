@@ -603,7 +603,7 @@ ui <- fluidPage(
   tags$head(
     tags$title("OmniPeak"),
     tags$link(rel = "icon", type = "image/png",
-              href = "https://raw.githubusercontent.com/plyush1993/OmniPeak/main/omnipeak.png")
+              href = "https://raw.githubusercontent.com/plyush1993/OmniPeak/main/inst/www/omnipeak.png")
   ),
 
   tags$head(tags$style(HTML("
@@ -637,7 +637,7 @@ ui <- fluidPage(
   
   div(
     style = "width: 100%; display: flex; align-items: center; justify-content: center; margin-bottom: 20px;",
-    tags$img(src = 'https://raw.githubusercontent.com/plyush1993/OmniPeak/main/omnipeak.png', height = '120px', style = 'margin-right: 20px;'),
+    tags$img(src = 'https://raw.githubusercontent.com/plyush1993/OmniPeak/main/inst/www/omnipeak.png', height = '120px', style = 'margin-right: 20px;'),
     div(style = 'font-size: 32px; font-weight: 900; color: #007BA7; text-align: center;', "OmniPeak - Reshape Metabolomics Peak Table")
   ), 
   
