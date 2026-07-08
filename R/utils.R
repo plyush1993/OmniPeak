@@ -1,3 +1,6 @@
+#..........................................
+# utils ----
+#..........................................
 js_copy <- "
 shinyjs.copyCode = function(text) {
   var x = document.createElement('textarea');

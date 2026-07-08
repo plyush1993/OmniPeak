@@ -796,6 +796,41 @@ metadata_df <- reactive({
   df[, meta_cols, drop = FALSE]
 })
 
+tidy_export_info <- reactive({
+  req(tidy_data(), processed_std(), state$base_name)
+
+  td <- tidy_data()
+
+  feature_ids <- as.character(processed_std()$.FID)
+  feature_cols <- intersect(names(td), feature_ids)
+
+  meta_cols <- setdiff(names(td), feature_cols)
+  meta_cols <- unique(meta_cols[nzchar(meta_cols)])
+
+  has_label <- "Label" %in% meta_cols
+  has_real_meta <- length(setdiff(meta_cols, c("Sample", "Label"))) > 0
+
+  base_suffix <- if (has_real_meta) {
+    "_tidy_meta"
+  } else if (has_label) {
+    "_tidy_label"
+  } else {
+    "_tidy"
+  }
+
+  list(
+    meta_cols = meta_cols,
+    feature_cols = feature_cols,
+    base_suffix = base_suffix,
+    tidy_csv = paste0(state$base_name, base_suffix, ".csv"),
+    tidy_txt = paste0(state$base_name, base_suffix, ".txt"),
+    metadata_csv = paste0(state$base_name, "_metadata.csv"),
+    metadata_txt = paste0(state$base_name, "_metadata.txt"),
+    dictionary = paste0(state$base_name, "_dictionary.rds"),
+    script = paste0(state$base_name, "_analysis_script.R")
+  )
+})
+
   # --- UPDATED: Split export buttons for Tidy CSV/TXT ---
   output$export_ui <- renderUI({
     req(tidy_data(), state$dictionary, state$attributes)
@@ -814,31 +849,26 @@ metadata_df <- reactive({
   })
 
   output$dl_tidy_csv <- downloadHandler(
-    filename = function() {
-      req(state$base_name)
-      has_extra_meta <- isTRUE(input$add_run_order) || isTRUE(input$add_extra_meta)
-      has_label <- isTRUE(input$add_labels)
-      suffix <- if (has_extra_meta) "_tidy_meta.csv" else if (has_label) "_tidy_label.csv" else "_tidy.csv"
-      paste0(state$base_name, suffix)
-    },
-    content = function(file) { write.csv(tidy_data(), file, row.names = FALSE) }
-  )
+  filename = function() {
+    tidy_export_info()$tidy_csv
+  },
+  content = function(file) {
+    write.csv(tidy_data(), file, row.names = FALSE)
+  }
+)
 
   output$dl_tidy_txt <- downloadHandler(
-    filename = function() {
-      req(state$base_name)
-      has_extra_meta <- isTRUE(input$add_run_order) || isTRUE(input$add_extra_meta)
-      has_label <- isTRUE(input$add_labels)
-      suffix <- if (has_extra_meta) "_tidy_meta.txt" else if (has_label) "_tidy_label.txt" else "_tidy.txt"
-      paste0(state$base_name, suffix)
-    },
-    content = function(file) { write.table(tidy_data(), file, sep = "\t", row.names = FALSE, quote = TRUE) }
-  )
+  filename = function() {
+    tidy_export_info()$tidy_txt
+  },
+  content = function(file) {
+    write.table(tidy_data(), file, sep = "\t", row.names = FALSE, quote = TRUE)
+  }
+)
 
 output$dl_dict <- downloadHandler(
   filename = function() {
-    req(state$base_name)
-    paste0(state$base_name, "_dictionary.rds")
+    tidy_export_info()$dictionary
   },
   content = function(file) {
     saveRDS(
@@ -855,24 +885,22 @@ output$dl_dict <- downloadHandler(
 )
 
   output$dl_meta_csv <- downloadHandler(
-    filename = function() {
-      req(state$base_name)
-      paste0(state$base_name, "_metadata.csv")
-    },
-    content = function(file) {
-      write.csv(metadata_df(), file, row.names = FALSE)
-    }
-  )
+  filename = function() {
+    tidy_export_info()$metadata_csv
+  },
+  content = function(file) {
+    write.csv(metadata_df(), file, row.names = FALSE)
+  }
+)
 
   output$dl_meta_txt <- downloadHandler(
-    filename = function() {
-      req(state$base_name)
-      paste0(state$base_name, "_metadata.txt")
-    },
-    content = function(file) {
-      write.table(metadata_df(), file, sep = "\t", row.names = FALSE, quote = TRUE)
-    }
-  )
+  filename = function() {
+    tidy_export_info()$metadata_txt
+  },
+  content = function(file) {
+    write.table(metadata_df(), file, sep = "\t", row.names = FALSE, quote = TRUE)
+  }
+)
 
   # ---------------------------------------------------------
   # RESTORE FROM ANY SESSION
@@ -1075,43 +1103,9 @@ output$dl_dict <- downloadHandler(
   td <- try(tidy_data(), silent = TRUE)
   req(!inherits(td, "try-error"))
 
-  # Detect all metadata columns directly from the final tidy table.
-  # This includes:
-  # Sample
-  # Label
-  # Order
-  # manually extracted metadata
-  # uploaded metadata CSV columns
-  feature_ids_script <- try(as.character(processed_std()$.FID), silent = TRUE)
+  info <- tidy_export_info()
 
-  if (!inherits(feature_ids_script, "try-error")) {
-    feature_cols_script <- intersect(names(td), feature_ids_script)
-    meta_cols <- setdiff(names(td), feature_cols_script)
-  } else {
-    # fallback
-    meta_cols <- c(
-      "Sample",
-      "Order",
-      "Label",
-      trimws(unlist(strsplit(input$extra_meta_names %||% "", ",")))
-    )
-    meta_cols <- intersect(meta_cols, names(td))
-  }
-
-  meta_cols <- unique(meta_cols)
-  meta_cols <- meta_cols[nzchar(meta_cols)]
-
-  has_extra_meta <- length(setdiff(meta_cols, c("Sample", "Label"))) > 0
-  has_label <- "Label" %in% meta_cols
-
-  base_suffix <- if (has_extra_meta) "_tidy_meta" else if (has_label) "_tidy_label" else "_tidy"
-
-  file_csv <- paste0(state$base_name, base_suffix, ".csv")
-  file_txt <- paste0(state$base_name, base_suffix, ".txt")
-
-  meta_csv <- paste0(state$base_name, "_metadata.csv")
-  meta_txt <- paste0(state$base_name, "_metadata.txt")
-
+  meta_cols <- info$meta_cols
   meta_cols_txt <- paste(shQuote(meta_cols), collapse = ", ")
 
   paste0(
@@ -1127,28 +1121,43 @@ output$dl_dict <- downloadHandler(
     "library(readr)\n",
     "library(tibble)\n\n",
 
-    "# 2. Load the tidy dataset and metadata\n",
-    "# --- If you downloaded the CSV files: ---\n",
-    "df <- read_csv('", file_csv, "', show_col_types = TRUE) %>%\n",
-    "  column_to_rownames('Sample')\n\n",
+    "# 2. Choose which exported format you downloaded\n",
+    "file_format <- 'csv'  # use 'csv' or 'txt'\n\n",
 
-    "meta_df <- read_csv('", meta_csv, "', show_col_types = TRUE) %>%\n",
-    "  column_to_rownames('Sample')\n\n",
+    "# 3. Output file names generated by OmniPeak\n",
+    "tidy_csv <- '", info$tidy_csv, "'\n",
+    "tidy_txt <- '", info$tidy_txt, "'\n",
+    "metadata_csv <- '", info$metadata_csv, "'\n",
+    "metadata_txt <- '", info$metadata_txt, "'\n\n",
 
-    "# --- If you downloaded the TXT files: ---\n",
-    "df <- read_tsv('", file_txt, "', show_col_types = TRUE) %>%\n",
-    "  column_to_rownames('Sample')\n\n",
+    "# 4. Load tidy dataset and optional metadata dataset\n",
+    "if (file_format == 'csv') {\n",
+    "  tidy_full <- read_csv(tidy_csv, show_col_types = TRUE)\n",
+    "  metadata_file <- read_csv(metadata_csv, show_col_types = TRUE)\n",
+    "} else if (file_format == 'txt') {\n",
+    "  tidy_full <- read_tsv(tidy_txt, show_col_types = TRUE)\n",
+    "  metadata_file <- read_tsv(metadata_txt, show_col_types = TRUE)\n",
+    "} else {\n",
+    "  stop(\"file_format must be 'csv' or 'txt'\")\n",
+    "}\n\n",
 
-    "meta_df <- read_tsv('", meta_txt, "', show_col_types = TRUE) %>%\n",
-    "  column_to_rownames('Sample')\n\n",
-
-    "# 3. Define metadata columns\n",
-    "meta_cols <- c(", meta_cols_txt, ")\n\n",
+    "# 5. Define metadata columns present in the tidy table\n",
+    "meta_cols <- c(", meta_cols_txt, ")\n",
     "meta_cols_no_sample <- setdiff(meta_cols, 'Sample')\n\n",
 
-    "# 4. Separate metadata from peak table\n",
-    "metadata <- df %>% select(any_of(meta_cols_no_sample))\n",
-    "ds <- df %>% select(-any_of(meta_cols_no_sample))\n\n"
+    "# 6. Convert Sample column to row names\n",
+    "df <- tidy_full %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "meta_df <- metadata_file %>%\n",
+    "  column_to_rownames('Sample')\n\n",
+
+    "# 7. Separate metadata and peak-intensity matrix from the tidy table\n",
+    "metadata <- df %>%\n",
+    "  select(any_of(meta_cols_no_sample))\n\n",
+
+    "ds <- df %>%\n",
+    "  select(-any_of(meta_cols_no_sample))\n\n"
   )
 })
 
