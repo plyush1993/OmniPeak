@@ -213,80 +213,6 @@ fluidPage(
 h3(class = "highlight", "2. Metadata & Labels"),
 
 div(
-  class = "source-box source-box-metadata",
-
-  div(class = "source-box-title", "Source: metadata file"),
-
-prettyCheckbox(
-  "add_metadata_csv",
-  "Add metadata from CSV",
-  value = FALSE,
-  status = "primary",
-  icon = icon("check"),
-  animation = "jelly"
-),
-
-conditionalPanel(
-  condition = "input.add_metadata_csv == true || (input.add_labels == true && input.label_source == 'from_metadata')",
-
-  fileInput(
-    "metadata_csv",
-    "Upload metadata CSV with column names",
-    accept = ".csv"
-  ),
-
-  uiOutput("metadata_sample_col_ui"),
-  uiOutput("metadata_label_col_ui"),
-
-  tags$hr(style = "margin-top: 10px; margin-bottom: 15px;"),
-  h4("Sample Name Cleaning", style = "margin-top:0px; font-weight:bold;"),
-
-  prettyCheckbox(
-    "clean_sample_names_export",
-    "Clean sample names",
-    value = FALSE,
-    status = "primary",
-    icon = icon("check"),
-    animation = "jelly"
-  ),
-
-  conditionalPanel(
-    condition = "input.clean_sample_names_export == true",
-
-    selectizeInput(
-      "sample_remove_suffixes",
-      "Remove suffixes/extensions:",
-      choices = c(
-        ".mzML", ".mzXML", ".raw", ".RAW",
-        ".cdf", ".CDF",
-        ".mzData", ".mzdata",
-        ".wiff", ".WIFF",
-        ".d", ".D",
-        " Peak area", " Peak Area",
-        " Peak height", " Peak Height",
-        "_Area", "_Height",
-        " Area", " Height"
-      ),
-      selected = c(
-        " Peak area", " Peak height",
-        "_Area", "_Height",
-        " Area", " Height"
-      ),
-      multiple = TRUE,
-      options = list(
-        create = TRUE,
-        createOnBlur = TRUE,
-        placeholder = "Type custom suffix and press Enter"
-      )
-    )
-  ),
-
-uiOutput("metadata_match_message")
-)),
-
-tags$hr(),
-
-div(
   class = "source-box source-box-samplename",
   div(class = "source-box-title", "Source: sample names or selected column"),
 
@@ -307,7 +233,7 @@ conditionalPanel(
       "Label source:",
       choiceNames = list(
         HTML("<b>From sample names</b><br><span style='font-size:12px;color:#666;'>Parse labels from file/sample names using tokens.</span>"),
-        HTML("<b>From uploaded metadata column</b><br><span style='font-size:12px;color:#666;'>Select one metadata file column from above as Label.</span>"),
+        HTML("<b>From uploaded metadata column</b><br><span style='font-size:12px;color:#666;'>Select one metadata file column from below as Label.</span>"),
         HTML("<b>From custom one-column CSV</b><br><span style='font-size:12px;color:#666;'>One label per sample, same order as detected samples.</span>"),
         HTML("<b>Manual editable table</b><br><span style='font-size:12px;color:#666;'>Edit labels directly in the app.</span>")
       ),
@@ -373,6 +299,77 @@ conditionalPanel(
         textInput("extra_meta_names", "Variable Name(s) (comma-separated):", placeholder = "Batch, Genotype"),
         textInput("extra_meta_indices", "Token Index(es) (comma-separated):", placeholder = "1, 4")
       )),
+
+tags$hr(),
+
+div(
+  class = "source-box source-box-metadata",
+
+  div(class = "source-box-title", "Source: metadata file"),
+
+prettyCheckbox(
+  "add_metadata_csv",
+  "Add metadata from CSV",
+  value = FALSE,
+  status = "primary",
+  icon = icon("check"),
+  animation = "jelly"
+),
+
+conditionalPanel(
+  condition = "input.add_metadata_csv == true || (input.add_labels == true && input.label_source == 'from_metadata')",
+
+  fileInput(
+    "metadata_csv",
+    "Upload metadata CSV with column names",
+    accept = ".csv"
+  ),
+
+  uiOutput("metadata_sample_col_ui"),
+  uiOutput("metadata_label_col_ui"),
+
+  tags$hr(style = "margin-top: 10px; margin-bottom: 15px;"),
+  h4("Sample Name Cleaning", style = "margin-top:0px; font-weight:bold;"),
+
+  prettyCheckbox(
+    "clean_sample_names_export",
+    "Clean sample names",
+    value = TRUE,
+    status = "primary",
+    icon = icon("check"),
+    animation = "jelly"
+  ),
+
+  conditionalPanel(
+    condition = "input.clean_sample_names_export == true",
+
+    selectizeInput(
+      "sample_remove_suffixes",
+      "Remove suffixes/extensions:",
+       choices = c(
+        ".mzML", ".mzXML", ".raw", ".RAW", ".lcd",
+        ".wiff", ".WIFF", ".d", ".D",
+        " Peak area", " Peak Area",
+        " Peak height", " Peak Height",
+        "_Area", "_Height",
+        " Area", " Height"
+      ),
+      selected = c(
+        " Peak area", " Peak height",
+        "_Area", "_Height",
+        " Area", " Height"
+      ),
+      multiple = TRUE,
+      options = list(
+        create = TRUE,
+        createOnBlur = TRUE,
+        placeholder = "Type custom suffix and press Enter"
+      )
+    )
+  ),
+
+uiOutput("metadata_match_message")
+)),
 
       tags$hr(),
       h3(class = "highlight", "3. Export Data"),
@@ -441,7 +438,7 @@ conditionalPanel(
             div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #3498db; padding: 15px; margin-bottom: 15px;",
               h4(tags$b("1. Upload & Parse"), style = "margin-top: 0; color: #3498db;"),
               p(style = "margin-bottom: 0;",
-              HTML("Select your software source (<b><i>mzMine</i></b>, <b><i>MS-DIAL</i></b>, <b><i>xcms</i></b>, etc.) and upload your <code>.csv</code> peak table. OmniPeak automatically standardizes the columns by selected names and detects your sample data by provided keywords. You can also specify Feature ID column (which becomes Tidy headers), by default: 'mz_rt'.")
+              HTML("Select your software source (<b><i>mzMine</i></b>, <b><i>MS-DIAL</i></b>, <b><i>xcms</i></b>, etc.) and upload your <code>.csv</code> peak table. OmniPeak automatically standardizes the columns by selected names and detects your sample data by provided keywords. You can also specify Feature ID column (which becomes Tidy headers, and also Feature column in Standard Peak Table), by default: 'mz_rt'.")
             )),
 
             div(
@@ -463,6 +460,39 @@ conditionalPanel(
 
 div(
   style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Labels from sample names", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "The optional ",
+    tags$code("Label"),
+    " column can be parsed directly from sample names using a separator and token index. "
+  )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Labels from metadata", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "Alternatively, the ",
+    tags$code("Label"),
+    " column can be taken from one selected column in the uploaded metadata table."
+  )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
+  tags$b("Order and extra variables from sample names", style = "color:#18bc9c;"),
+  p(
+    style = "margin-bottom: 0; margin-top: 5px;",
+    "You can also add ",
+    tags$code("Order"),
+    " by detected sample sequence and extract additional variables directly from sample names, using token indices."
+  )
+),
+
+div(
+  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
   tags$b("Metadata from CSV", style = "color:#18bc9c;"),
   p(
     style = "margin-bottom: 0; margin-top: 5px;",
@@ -477,68 +507,13 @@ div(
     tags$code("Timepoint"),
     "."
   )
-),
-
-div(
-  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
-  tags$b("Labels from sample names", style = "color:#18bc9c;"),
-  p(
-    style = "margin-bottom: 0; margin-top: 5px;",
-    "The optional ",
-    tags$code("Label"),
-    " column can be parsed directly from sample names using a separator and token index. ",
-    "This is useful when group names are already encoded in the file names."
-  )
-),
-
-div(
-  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
-  tags$b("Labels from metadata", style = "color:#18bc9c;"),
-  p(
-    style = "margin-bottom: 0; margin-top: 5px;",
-    "Alternatively, the ",
-    tags$code("Label"),
-    " column can be taken from one selected column in the uploaded metadata table, for example ",
-    tags$code("Condition"),
-    " or ",
-    tags$code("Treatment"),
-    "."
-  )
-),
-
-div(
-  style = "background:#ffffff; border-left:4px solid #18bc9c; padding:10px; margin-bottom:10px; border-radius:5px;",
-  tags$b("Order and extra variables from sample names", style = "color:#18bc9c;"),
-  p(
-    style = "margin-bottom: 0; margin-top: 5px;",
-    "You can also add ",
-    tags$code("Order"),
-    " by detected sample sequence and extract additional variables directly from sample names, such as ",
-    tags$code("Batch"),
-    ", ",
-    tags$code("Genotype"),
-    ", or ",
-    tags$code("Treatment"),
-    ", using token indices."
-  )
-),
-
-p(
-  style = "margin-bottom: 0;",
-  tags$b("Optional cleaning: ", style = "color: #18bc9c;"),
-  "Use sample-name cleaning only when sample names in the peak table and metadata file differ by suffixes such as ",
-  tags$code(".mzML"),
-  ", ",
-  tags$code("Peak area"),
-  ", or ",
-  tags$code("_Area"),
-  "."
 )
 ),
 
             div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #008B8B; padding: 15px; margin-bottom: 15px;",
               h4(tags$b("3. Export Data"), style = "margin-top: 0; color: #008B8B;"),
-              p("Download your shaped tidy dataset: features (peaks) as columns, samples as rows in ", tags$code(".csv")," or ",tags$code(".txt"), ". Directly compatible with ", HTML("<b><i>MetaboAnalyst</i></b> .")),
+              p("Download your shaped tidy dataset: features (peaks) as columns, samples as rows in ", tags$code(".csv")," or ",tags$code(".txt"), ". Directly compatible with ", HTML("<b><i>MetaboAnalyst</i></b> ."),
+                "Optionally you can download Metadata (all defines metadata columns) and Standard Peak Table (Feature ID, mz, RT, and Sample columns) files."),
               p(style = "margin-bottom: 0;", tags$b("Crucial: ", style = "color: #d35400;"), "Always download the Dictionary ", tags$code(".rds"), " file! This acts as a memory bank for your chemical features (m/z, RT) needed for restoration later.")
             ),
 
