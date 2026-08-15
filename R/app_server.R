@@ -149,6 +149,23 @@ app_server <- function(input, output, session) {
   output$global_controls <- renderUI({
     req(state$raw_std)
     cols <- names(state$raw_std)
+    display_names <- cols
+    colmap <- state$attributes$export_colmap
+
+    if (!is.null(colmap)) {
+      colmap <- colmap[names(colmap) != "feature_id"]
+
+      for (std_nm in names(colmap)) {
+        orig_nm <- colmap[[std_nm]]
+        idx <- match(std_nm, cols)
+
+        if (!is.na(idx) && nzchar(orig_nm)) {
+          display_names[idx] <- orig_nm
+        }
+      }
+    }
+
+  choices_list <- setNames(cols, display_names)
 
     def_id <- if (".FID" %in% cols) ".FID" else if ("feature_id" %in% cols) "Combine m/z and RT" else "feature_id"
     def_mz <- grep("(?i)^(mz|m.z|average.mz)$", cols, value = TRUE)[1]
@@ -159,7 +176,11 @@ app_server <- function(input, output, session) {
       h4("Global Parsing Settings", style = "margin-top:0px; font-weight:bold;"),
       fluidRow(
         column(12, selectizeInput("id_col", "Feature ID column:",
-                                  choices = c("Combine m/z and RT", "Auto-generate (feat_1)", cols),
+                                  choices = c(
+  "Combine m/z and RT" = "Combine m/z and RT",
+  "Auto-generate (feat_1)" = "Auto-generate (feat_1)",
+  choices_list
+),
                                   selected = def_id))
       ),
       conditionalPanel(
@@ -169,8 +190,8 @@ app_server <- function(input, output, session) {
         )
       ),
       fluidRow(
-        column(6, selectizeInput("mz_col", "m/z column:", choices = c("None", cols), selected = def_mz %||% "None")),
-        column(6, selectizeInput("rt_col", "RT column:", choices = c("None", cols), selected = def_rt %||% "None"))
+        column(6, selectizeInput("mz_col", "m/z column:", choices = c("None" = "None", choices_list), selected = def_mz %||% "None")),
+        column(6, selectizeInput("rt_col", "RT column:", choices = c("None" = "None", choices_list), selected = def_rt %||% "None"))
       ),
 
       tags$hr(style = "margin-top: 5px; margin-bottom: 15px;"),
@@ -192,7 +213,7 @@ app_server <- function(input, output, session) {
       conditionalPanel(
         condition = "input.sample_mode == 'manual'",
         selectizeInput("sample_cols_manual", "Pick sample columns:",
-                       choices = cols, selected = NULL, multiple = TRUE)
+                       choices = choices_list, selected = NULL, multiple = TRUE)
       )
     )
   })
