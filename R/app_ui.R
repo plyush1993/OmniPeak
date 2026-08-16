@@ -391,11 +391,19 @@ uiOutput("metadata_match_message")
                  uiOutput("quick_stats_ui"),
                  uiOutput("help_raw"),
                  DTOutput("preview_raw") ),
-        tabPanel("Export Preview",
-                 tags$br(),
-                 uiOutput("quick_stats_tidy"),
-                 uiOutput("help_tidy"),
-                 DTOutput("preview_tidy") ),
+        tabPanel(
+              "Export Preview",
+              tags$br(),
+              uiOutput("quick_stats_tidy"),
+              uiOutput("help_tidy"),
+              h4(
+                "Tidy Table",
+                style = "font-weight:bold; color:#007BA7;"
+              ),
+              DTOutput("preview_tidy"),
+              uiOutput("preview_metadata_section"),
+              uiOutput("preview_standard_section")
+            ),
         tabPanel("Restored Preview",
                  tags$br(),
                  uiOutput("quick_stats_restored"),

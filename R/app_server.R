@@ -218,6 +218,35 @@ app_server <- function(input, output, session) {
     )
   })
 
+  observeEvent(input$sample_cols_manual, {
+
+  req(state$raw_std)
+
+  sel <- input$sample_cols_manual
+
+  # Need at least 2 selected columns to define a range
+  if (is.null(sel) || length(sel) < 2) return()
+
+  cols <- names(state$raw_std)
+
+  pos <- match(sel, cols)
+  pos <- pos[!is.na(pos)]
+
+  if (length(pos) < 2) return()
+
+  # Everything between leftmost and rightmost selected column
+  range_cols <- cols[min(pos):max(pos)]
+
+  if (!setequal(sel, range_cols)) {
+    updateSelectizeInput(
+      session,
+      "sample_cols_manual",
+      selected = range_cols
+    )
+  }
+
+}, ignoreInit = TRUE)
+
   processed_std <- reactive({
     req(state$raw_std)
     df <- state$raw_std
@@ -1129,6 +1158,99 @@ output$dl_dict <- downloadHandler(
     req(tidy_data())
     datatable(fast_preview(tidy_data()), options = list(scrollX = TRUE))
   })
+
+  output$preview_metadata_section <- renderUI({
+
+  req(tidy_data())
+
+  # Metadata export is meaningful only when some metadata
+  # beyond the Sample column is being generated
+  meta <- metadata_df()
+
+  if (is.null(meta) || ncol(meta) <= 1) {
+    return(NULL)
+  }
+
+  tagList(
+    tags$hr(),
+
+    h4(
+      "Metadata Table",
+      style = "font-weight:bold; color:#18bc9c;"
+    ),
+
+    DTOutput("preview_metadata")
+  )
+})
+
+
+output$preview_metadata <- renderDT({
+
+  validate(
+    need(
+      is.null(upload_error()),
+      upload_error()
+    )
+  )
+
+  req(metadata_df())
+
+  datatable(
+    fast_preview(metadata_df()),
+    options = list(
+      scrollX = TRUE
+    )
+  )
+})
+
+output$preview_standard_section <- renderUI({
+
+  req(processed_std(), sample_cols())
+
+  mz_col <- input$mz_col %||% "None"
+  rt_col <- input$rt_col %||% "None"
+
+  # Standard Peak Table requires both m/z and RT
+  if (
+    identical(mz_col, "None") ||
+    identical(rt_col, "None") ||
+    !mz_col %in% names(processed_std()) ||
+    !rt_col %in% names(processed_std())
+  ) {
+    return(NULL)
+  }
+
+  tagList(
+    tags$hr(),
+
+    h4(
+      "Standard Peak Table",
+      style = "font-weight:bold; color:#008B8B;"
+    ),
+
+    DTOutput("preview_standard")
+  )
+})
+
+
+output$preview_standard <- renderDT({
+
+  validate(
+    need(
+      is.null(upload_error()),
+      upload_error()
+    )
+  )
+
+  req(standard_peak_table())
+
+  datatable(
+    fast_preview(standard_peak_table()),
+    options = list(
+      scrollX = TRUE
+    )
+  )
+})
 
   output$preview_restored <- renderDT({
     req(state$restored_df)

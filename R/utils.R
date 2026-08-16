@@ -193,15 +193,75 @@ multi_sample_idx <- function(cols, kws) {
   which(hits)
 }
 
-labels_from_sample_names <- function(sample_names, token_sep = "_", token_index = 2) {
+labels_from_sample_names <- function(
+    sample_names,
+    token_sep = "_",
+    token_index = 2,
+    show_notification = TRUE
+) {
+
   token_sep <- token_sep %||% "_"
   token_index <- as.integer(token_index %||% 2)
 
-  parts <- strsplit(sample_names, token_sep, fixed = TRUE)
-  has_ix <- vapply(parts, function(v) length(v) >= token_index, logical(1))
-  if (!all(has_ix)) stop(sprintf("Token %d missing in some sample names.", token_index))
-  labs <- vapply(parts, function(v) v[[token_index]], FUN.VALUE = character(1))
-  if (!all(nzchar(labs))) stop("Parsed empty labels — adjust separator/index.")
+  parts <- strsplit(
+    sample_names,
+    token_sep,
+    fixed = TRUE
+  )
+
+  has_ix <- vapply(
+    parts,
+    function(v) length(v) >= token_index,
+    logical(1)
+  )
+
+  # Also treat an empty requested token as invalid
+  has_token <- vapply(
+    seq_along(parts),
+    function(i) {
+      has_ix[i] &&
+        nzchar(parts[[i]][[token_index]])
+    },
+    logical(1)
+  )
+
+  if (!all(has_token)) {
+
+    msg <- sprintf(
+      paste0(
+        "Warning: Token %d missing in some sample names. ",
+        "Falling back to the full sample name."
+      ),
+      token_index
+    )
+
+    warning(msg)
+
+    if (
+      isTRUE(show_notification) &&
+      !is.null(shiny::getDefaultReactiveDomain())
+    ) {
+      shiny::showNotification(
+        msg,
+        type = "warning",
+        duration = 8
+      )
+    }
+  }
+
+  labs <- vapply(
+    seq_along(parts),
+    function(i) {
+
+      if (has_token[i]) {
+        parts[[i]][[token_index]]
+      } else {
+        sample_names[i]
+      }
+    },
+    character(1)
+  )
+
   labs
 }
 
@@ -244,16 +304,17 @@ make_label_table <- function(sample_names, labels) {
   )
 }
 
-labels_from_sample_names_or_raw <- function(sample_names, token_sep = "_", token_index = 2) {
-  tryCatch(
-    labels_from_sample_names(
-      sample_names,
-      token_sep = token_sep,
-      token_index = token_index
-    ),
-    error = function(e) {
-      sample_names
-    }
+labels_from_sample_names_or_raw <- function(
+    sample_names,
+    token_sep = "_",
+    token_index = 2
+) {
+
+  labels_from_sample_names(
+    sample_names,
+    token_sep = token_sep,
+    token_index = token_index,
+    show_notification = FALSE
   )
 }
 
