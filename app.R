@@ -218,15 +218,75 @@ multi_sample_idx <- function(cols, kws) {
   which(hits)
 }
 
-labels_from_sample_names <- function(sample_names, token_sep = "_", token_index = 2) {
+labels_from_sample_names <- function(
+    sample_names,
+    token_sep = "_",
+    token_index = 2,
+    show_notification = TRUE
+) {
+
   token_sep <- token_sep %||% "_"
   token_index <- as.integer(token_index %||% 2)
 
-  parts <- strsplit(sample_names, token_sep, fixed = TRUE)
-  has_ix <- vapply(parts, function(v) length(v) >= token_index, logical(1))
-  if (!all(has_ix)) stop(sprintf("Token %d missing in some sample names.", token_index))
-  labs <- vapply(parts, function(v) v[[token_index]], FUN.VALUE = character(1))
-  if (!all(nzchar(labs))) stop("Parsed empty labels — adjust separator/index.")
+  parts <- strsplit(
+    sample_names,
+    token_sep,
+    fixed = TRUE
+  )
+
+  has_ix <- vapply(
+    parts,
+    function(v) length(v) >= token_index,
+    logical(1)
+  )
+
+  # Also treat an empty requested token as invalid
+  has_token <- vapply(
+    seq_along(parts),
+    function(i) {
+      has_ix[i] &&
+        nzchar(parts[[i]][[token_index]])
+    },
+    logical(1)
+  )
+
+  if (!all(has_token)) {
+
+    msg <- sprintf(
+      paste0(
+        "Warning: Token %d missing in some sample names. ",
+        "Falling back to the full sample name."
+      ),
+      token_index
+    )
+
+    warning(msg)
+
+    if (
+      isTRUE(show_notification) &&
+      !is.null(shiny::getDefaultReactiveDomain())
+    ) {
+      shiny::showNotification(
+        msg,
+        type = "warning",
+        duration = 8
+      )
+    }
+  }
+
+  labs <- vapply(
+    seq_along(parts),
+    function(i) {
+
+      if (has_token[i]) {
+        parts[[i]][[token_index]]
+      } else {
+        sample_names[i]
+      }
+    },
+    character(1)
+  )
+
   labs
 }
 
@@ -269,16 +329,17 @@ make_label_table <- function(sample_names, labels) {
   )
 }
 
-labels_from_sample_names_or_raw <- function(sample_names, token_sep = "_", token_index = 2) {
-  tryCatch(
-    labels_from_sample_names(
-      sample_names,
-      token_sep = token_sep,
-      token_index = token_index
-    ),
-    error = function(e) {
-      sample_names
-    }
+labels_from_sample_names_or_raw <- function(
+    sample_names,
+    token_sep = "_",
+    token_index = 2
+) {
+
+  labels_from_sample_names(
+    sample_names,
+    token_sep = token_sep,
+    token_index = token_index,
+    show_notification = FALSE
   )
 }
 
@@ -823,11 +884,19 @@ uiOutput("metadata_match_message")
                  uiOutput("quick_stats_ui"),
                  uiOutput("help_raw"),
                  DTOutput("preview_raw") ),
-        tabPanel("Export Preview",
-                 tags$br(),
-                 uiOutput("quick_stats_tidy"),
-                 uiOutput("help_tidy"),
-                 DTOutput("preview_tidy") ),
+        tabPanel(
+              "Export Preview",
+              tags$br(),
+              uiOutput("quick_stats_tidy"),
+              uiOutput("help_tidy"),
+              h4(
+                "Tidy Table",
+                style = "font-weight:bold; color:#007BA7;"
+              ),
+              DTOutput("preview_tidy"),
+              uiOutput("preview_metadata_section"),
+              uiOutput("preview_standard_section")
+            ),
         tabPanel("Restored Preview", 
                  tags$br(),
                  uiOutput("quick_stats_restored"),
@@ -1179,6 +1248,35 @@ server <- function(input, output, session) {
       )
     )
   })
+  
+  observeEvent(input$sample_cols_manual, {
+
+  req(state$raw_std)
+
+  sel <- input$sample_cols_manual
+
+  # Need at least 2 selected columns to define a range
+  if (is.null(sel) || length(sel) < 2) return()
+
+  cols <- names(state$raw_std)
+
+  pos <- match(sel, cols)
+  pos <- pos[!is.na(pos)]
+
+  if (length(pos) < 2) return()
+
+  # Everything between leftmost and rightmost selected column
+  range_cols <- cols[min(pos):max(pos)]
+
+  if (!setequal(sel, range_cols)) {
+    updateSelectizeInput(
+      session,
+      "sample_cols_manual",
+      selected = range_cols
+    )
+  }
+
+}, ignoreInit = TRUE)
   
   processed_std <- reactive({
     req(state$raw_std)
@@ -2092,6 +2190,99 @@ output$dl_dict <- downloadHandler(
     datatable(fast_preview(tidy_data()), options = list(scrollX = TRUE)) 
   })
   
+  output$preview_metadata_section <- renderUI({
+
+  req(tidy_data())
+
+  # Metadata export is meaningful only when some metadata
+  # beyond the Sample column is being generated
+  meta <- metadata_df()
+
+  if (is.null(meta) || ncol(meta) <= 1) {
+    return(NULL)
+  }
+
+  tagList(
+    tags$hr(),
+
+    h4(
+      "Metadata Table",
+      style = "font-weight:bold; color:#18bc9c;"
+    ),
+
+    DTOutput("preview_metadata")
+  )
+})
+
+
+output$preview_metadata <- renderDT({
+
+  validate(
+    need(
+      is.null(upload_error()),
+      upload_error()
+    )
+  )
+
+  req(metadata_df())
+
+  datatable(
+    fast_preview(metadata_df()),
+    options = list(
+      scrollX = TRUE
+    )
+  )
+})
+  
+output$preview_standard_section <- renderUI({
+
+  req(processed_std(), sample_cols())
+
+  mz_col <- input$mz_col %||% "None"
+  rt_col <- input$rt_col %||% "None"
+
+  # Standard Peak Table requires both m/z and RT
+  if (
+    identical(mz_col, "None") ||
+    identical(rt_col, "None") ||
+    !mz_col %in% names(processed_std()) ||
+    !rt_col %in% names(processed_std())
+  ) {
+    return(NULL)
+  }
+
+  tagList(
+    tags$hr(),
+
+    h4(
+      "Standard Peak Table",
+      style = "font-weight:bold; color:#008B8B;"
+    ),
+
+    DTOutput("preview_standard")
+  )
+})
+
+
+output$preview_standard <- renderDT({
+
+  validate(
+    need(
+      is.null(upload_error()),
+      upload_error()
+    )
+  )
+
+  req(standard_peak_table())
+
+  datatable(
+    fast_preview(standard_peak_table()),
+    options = list(
+      scrollX = TRUE
+    )
+  )
+})
+
   output$preview_restored <- renderDT({ 
     req(state$restored_df)
     df <- state$restored_df
