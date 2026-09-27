@@ -54,6 +54,10 @@ standardize_peak_table <- function(df, type) {
   # Basic name cleanup to start
   names(df) <- trimws(names(df))
 
+  if (".FID" %in% names(df)) {
+  stop("Column name '.FID' is reserved by OmniPeak. Please rename it before upload.")
+}
+  
   export_template  <- names(df)
   export_colmap    <- c()
   export_rt_factor <- 1
@@ -86,19 +90,9 @@ standardize_peak_table <- function(df, type) {
     }
     df <- dplyr::rename(df, mz = !!mz_col, rt = !!rt_col)
 
-    id_col <- find_col("row id", names(df))
-    if (!is.na(id_col)) {
-      export_colmap <- c(export_colmap, feature_id = id_col)
-      df$feature_id <- df[[id_col]]
-    }
-
   } else if (type == "default") {
-    req_cols <- c("Feature", "mz", "rt")
-    miss <- setdiff(req_cols, names(df))
-    export_colmap <- c(mz = "mz", rt = "rt")
     export_template <- names(df)
-    if (length(miss)) stop("DEFAULT table missing: ", paste(miss, collapse = ", "))
-    df <- dplyr::rename(df, mz = `mz`, rt = `rt`)
+    export_colmap <- c()
 
   } else if (type == "msdial") {
     header_keywords <- c("Alignment ID", "Average Mz", "Average Rt")
@@ -157,17 +151,31 @@ standardize_peak_table <- function(df, type) {
     miss <- setdiff(req_cols, names(df))
     if (length(miss)) stop("XCMS table missing: ", paste(miss, collapse = ", "))
 
-    export_template <- names(df)
-    export_colmap <- c(mz = "mzmed", rt = "rtmed")
+    id_col <- names(df)[1]
 
-    df <- dplyr::rename(df, mz = mzmed, rt = rtmed)
-    export_rt_factor <- 1
-    df$rt <- df$rt / 1
+export_template <- names(df)
+
+export_colmap <- c(
+  "Feature ID" = id_col,
+  mz = "mzmed",
+  rt = "rtmed"
+)
+
+names(df)[1] <- "Feature ID"
+
+df <- dplyr::rename(df, mz = mzmed, rt = rtmed)
+
+export_rt_factor <- 1
+df$rt <- suppressWarnings(as.numeric(df$rt)) / 1
   }
 
+  if ("mz" %in% names(df)) {
   df$mz <- suppressWarnings(as.numeric(df$mz))
+}
+
+if ("rt" %in% names(df)) {
   df$rt <- suppressWarnings(as.numeric(df$rt))
-  if (!"feature_id" %in% names(df)) df$feature_id <- seq_len(nrow(df))
+}
 
   attr(df, "export_template")  <- export_template
   attr(df, "export_colmap")    <- export_colmap
@@ -182,11 +190,7 @@ format_final_table_as_input <- function(final_df_with_fid, type,
                                         export_rt_factor = 1) {
   df <- as.data.frame(final_df_with_fid, check.names = FALSE, stringsAsFactors = FALSE)
 
-  if (identical(type, "mzmine")) {
-    df <- df[, setdiff(names(df), ".FID"), drop = FALSE]
-  } else {
-    df <- df[, setdiff(names(df), c("feature_id", ".FID")), drop = FALSE]
-  }
+df <- df[, setdiff(names(df), ".FID"), drop = FALSE]
 
   if (is.finite(export_rt_factor) && export_rt_factor != 1 && "rt" %in% names(df)) {
     df$rt <- suppressWarnings(as.numeric(df$rt)) * export_rt_factor
@@ -696,6 +700,7 @@ ui <- fluidPage(
       selectInput("data_type", "Data table type:", 
                   choices = c("mzMine" = "mzmine", "xcms" = "xcms", "MS-DIAL" = "msdial", "Generic" = "default"),
                   selected = "mzmine"),
+      uiOutput("format_requirements"),
       fileInput("raw_file", "Upload Peak Table (*.csv)", accept = ".csv"),
       helpText(HTML("<i class='fa fa-info-circle'></i> Need data to test? Check examples in <a href='https://github.com/plyush1993/OmniPeak' target='_blank'>GitHub</a>.")),
       uiOutput("upload_tab_error"),
@@ -939,7 +944,7 @@ uiOutput("metadata_match_message")
             div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #3498db; padding: 15px; margin-bottom: 15px;",
               h4(tags$b("1. Upload & Parse"), style = "margin-top: 0; color: #3498db;"),
               p(style = "margin-bottom: 0;", 
-              HTML("Select your software source (<b><i>mzMine</i></b>, <b><i>MS-DIAL</i></b>, <b><i>xcms</i></b>, etc.) and upload your <code>.csv</code> peak table. OmniPeak automatically standardizes the columns by selected names and detects your sample data by provided keywords. You can also specify Feature ID column (which becomes Tidy headers, and also Feature column in Standard Peak Table), by default: 'mz_rt'.")
+              HTML("Select your software source (<b><i>mzMine</i></b>, <b><i>MS-DIAL</i></b>, <b><i>xcms</i></b>, etc.) and upload your <code>.csv</code> peak table. OmniPeak automatically standardizes the columns by selected names and detects your sample data by provided keywords. You can also specify Feature ID column which becomes Tidy headers, and also Feature column in Standard Peak Table.")
             )),
             
             div(
@@ -1055,46 +1060,180 @@ server <- function(input, output, session) {
   )
   
   output$upload_tab_error <- renderUI({
-    if (is.null(upload_error())) return(NULL)
-    div(style = "color: red; font-weight: bold; margin-bottom: 10px;", upload_error())
-  })
+
+  msg <- upload_error()
+
+  if (is.null(msg)) return(NULL)
+
+  div(
+    style = "
+      color: #a94442;
+      background-color: #f2dede;
+      border-color: #ebccd1;
+      padding: 15px;
+      margin-bottom: 15px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      font-size: 16px;
+      font-weight: bold;
+      text-align: center;
+    ",
+    icon("exclamation-triangle"),
+    " ",
+    msg
+  )
+})
   
   # ---------------------------------------------------------
   # STEP 1: Parse Upload
   # ---------------------------------------------------------
+  output$format_requirements <- renderUI({
+
+  type <- input$data_type %||% "mzmine"
+
+  txt <- switch(
+    type,
+
+    mzmine = HTML(
+      "<b>mzMine:</b> CSV peak table containing an m/z column
+       (<code>row m/z</code> or <code>mz</code>) and an RT column
+       (<code>row retention time</code> or <code>rt</code>).
+       <code>Row ID</code> is recommended as the Feature ID.
+       Sample columns are defined after upload."
+    ),
+
+    xcms = HTML(
+      "<b>xcms:</b> CSV feature table containing
+       <code>mzmed</code> and <code>rtmed</code>.
+       The first column is treated as the native Feature ID.
+       <code>rtmed</code> is interpreted in seconds and converted internally to minutes."
+    ),
+
+    msdial = HTML(
+      "<b>MS-DIAL:</b> alignment CSV containing
+       <code>Average Mz</code> and <code>Average Rt(min)</code>.
+       <code>Alignment ID</code> is recommended as the Feature ID.
+       Standard MS-DIAL metadata rows preceding the header are supported."
+    ),
+
+    default = HTML(
+      "<b>Generic:</b> any CSV peak table with one feature per row.
+       No predefined column names are required.
+       After upload, select the Feature ID, m/z, RT, and sample intensity columns.
+       m/z and RT are optional for tidy reshaping, but required for the Standard Peak Table
+       or for an ID generated from m/z + RT."
+    )
+  )
+
+  omni_status_box(
+    type = "info",
+    text = txt
+  )
+})
+  
   observeEvent(list(input$raw_file, input$data_type), {
-    req(input$raw_file)
-    w_up <- Waiter$new(html = spin_6(), color = "rgba(44,62,80,0.8)")
-    w_up$show()
-    
-    tryCatch({
-      type <- input$data_type
-      if (type == "msdial") {
-        df0 <- as.data.frame(vroom::vroom(input$raw_file$datapath, delim = ",", col_names = FALSE, col_types = vroom::cols(.default = "c"), na = ""))
-      } else {
-        df0 <- as.data.frame(vroom::vroom(input$raw_file$datapath, delim = ",", show_col_types = FALSE))
-      }
-      
-      state$raw_data_true <- df0
-      df_std <- standardize_peak_table(df0, type = type)
-      state$raw_std <- df_std
-      state$base_name <- tools::file_path_sans_ext(input$raw_file$name)
-      
-      state$attributes <- list(
-        type = type,
-        export_template = attr(df_std, "export_template"),
-        export_colmap = attr(df_std, "export_colmap"),
-        export_rt_factor = attr(df_std, "export_rt_factor") %||% 1,
-        msdial_preamble = attr(df_std, "msdial_preamble")
+
+  req(input$raw_file)
+
+  w_up <- Waiter$new(
+    html = tagList(
+      spin_6(),
+      h4(
+        "Reading Table...",
+        style = "color:#ffffff !important; text-shadow:none !important;"
       )
-      upload_error(NULL)
-    }, error = function(e) {
-      upload_error(paste0("Parsing error: ", e$message))
-      state$raw_std <- NULL
-    }, finally = {
-      w_up$hide()
-    })
+    ),
+    color = "rgba(44,62,80,0.8)"
+  )
+
+  w_up$show()
+
+  tryCatch({
+
+    # Require CSV
+    ext <- tolower(tools::file_ext(input$raw_file$name))
+
+    if (!identical(ext, "csv")) {
+      stop("Please upload a .csv file.")
+    }
+
+    type <- input$data_type %||% "mzmine"
+
+    if (type == "msdial") {
+
+      df0 <- as.data.frame(
+        vroom::vroom(
+          input$raw_file$datapath,
+          delim = ",",
+          col_names = FALSE,
+          col_types = vroom::cols(.default = "c"),
+          na = ""
+        )
+      )
+
+    } else {
+
+      df0 <- as.data.frame(
+        vroom::vroom(
+          input$raw_file$datapath,
+          delim = ",",
+          show_col_types = FALSE
+        )
+      )
+    }
+
+    df_std <- standardize_peak_table(
+      df0,
+      type = type
+    )
+
+    # Only store the dataset after successful parsing
+    state$raw_data_true <- df0
+    state$raw_std <- df_std
+    state$base_name <- tools::file_path_sans_ext(input$raw_file$name)
+
+    state$attributes <- list(
+      type = type,
+      export_template = attr(df_std, "export_template"),
+      export_colmap = attr(df_std, "export_colmap"),
+      export_rt_factor = attr(df_std, "export_rt_factor") %||% 1,
+      msdial_preamble = attr(df_std, "msdial_preamble")
+    )
+
+    upload_error(NULL)
+
+    showNotification(
+      "Dataset loaded successfully!",
+      type = "message",
+      duration = 3
+    )
+
+  }, error = function(e) {
+
+    state$raw_data_true <- NULL
+    state$raw_std <- NULL
+    state$attributes <- NULL
+    state$dictionary <- NULL
+
+    msg <- paste0(
+      "Parsing error: ",
+      conditionMessage(e)
+    )
+
+    upload_error(msg)
+
+    showNotification(
+      msg,
+      type = "error",
+      duration = 6
+    )
+
+  }, finally = {
+
+    w_up$hide()
+
   })
+})
   
   # ---------------------------------------------------------
   # QUICK STATS DASHBOARD & RESET BUTTON
@@ -1198,9 +1337,80 @@ server <- function(input, output, session) {
 
   choices_list <- setNames(cols, display_names)
     
-    def_id <- if (".FID" %in% cols) ".FID" else if ("feature_id" %in% cols) "Combine m/z and RT" else "feature_id"
-    def_mz <- grep("(?i)^(mz|m.z|average.mz)$", cols, value = TRUE)[1]
-    def_rt <- grep("(?i)^(rt|retention.time|average.rt)$", cols, value = TRUE)[1]
+    norm_col <- function(x) {
+  gsub("[^a-z0-9]", "", tolower(x))
+}
+
+pick_col <- function(keys) {
+  ii <- which(norm_col(cols) %in% keys)
+
+  if (length(ii)) {
+    cols[ii[1]]
+  } else {
+    NULL
+  }
+}
+
+# Try common names automatically
+def_mz <- pick_col(
+  c(
+    "mz",
+    "rowmz",
+    "mzmed",
+    "averagemz",
+    "mass"
+  )
+)
+
+def_rt <- pick_col(
+  c(
+    "rt",
+    "rowretentiontime",
+    "retentiontime",
+    "retentiontimemin",
+    "rtmed",
+    "averagert",
+    "averagertmin"
+  )
+)
+
+fallback_id <- if (!is.null(def_mz) && !is.null(def_rt)) {
+  "Combine m/z and RT"
+} else {
+  "Auto-generate (feat_1)"
+}
+
+dtype <- state$attributes$type %||% "default"
+
+def_id <- switch(
+
+  dtype,
+
+  mzmine = pick_col(
+    c("rowid", "featureid", "feature", "id")
+  ) %||% fallback_id,
+
+  msdial = pick_col(
+    c("alignmentid", "featureid", "id")
+  ) %||% fallback_id,
+
+  xcms = pick_col(
+    c("featureid")
+  ) %||% cols[1],
+
+  default = pick_col(
+    c(
+      "featureid",
+      "feature",
+      "rowid",
+      "alignmentid",
+      "id"
+    )
+  ) %||% fallback_id
+)
+
+if (is.null(def_mz)) def_mz <- "None"
+if (is.null(def_rt)) def_rt <- "None"
     
     tagList(
       tags$hr(style = "margin-top: 5px; margin-bottom: 15px;"),
@@ -1243,36 +1453,125 @@ server <- function(input, output, session) {
         )),
       conditionalPanel(
         condition = "input.sample_mode == 'manual'",
-        selectizeInput("sample_cols_manual", "Pick sample columns:",
-                       choices = choices_list, selected = NULL, multiple = TRUE)
+        selectizeInput(
+  "sample_cols_manual",
+  "Pick sample columns:",
+  choices = choices_list,
+  selected = NULL,
+  multiple = TRUE,
+  options = list(
+    placeholder = "Select first and last sample columns"
+  )
+)
       )
     )
   })
   
-  observeEvent(input$sample_cols_manual, {
+  manual_range_state <- reactiveValues(
+  first = NULL,
+  selected = character(0),
+  updating = FALSE
+)
+
+observeEvent(state$raw_std, {
+
+  manual_range_state$first <- NULL
+  manual_range_state$selected <- character(0)
+  manual_range_state$updating <- FALSE
+
+}, ignoreInit = TRUE)
+
+
+observeEvent(input$sample_cols_manual, {
 
   req(state$raw_std)
 
-  sel <- input$sample_cols_manual
-
-  # Need at least 2 selected columns to define a range
-  if (is.null(sel) || length(sel) < 2) return()
-
+  sel  <- input$sample_cols_manual %||% character(0)
   cols <- names(state$raw_std)
 
-  pos <- match(sel, cols)
-  pos <- pos[!is.na(pos)]
+  # Ignore update caused by updateSelectizeInput()
+  if (isTRUE(manual_range_state$updating)) {
 
-  if (length(pos) < 2) return()
+    manual_range_state$updating <- FALSE
+    manual_range_state$selected <- sel
 
-  # Everything between leftmost and rightmost selected column
-  range_cols <- cols[min(pos):max(pos)]
+    return()
+  }
 
-  if (!setequal(sel, range_cols)) {
+  # Newly selected columns
+  added <- setdiff(
+    sel,
+    manual_range_state$selected
+  )
+
+  # Allow manual removal
+  removed <- setdiff(
+    manual_range_state$selected,
+    sel
+  )
+
+  if (length(removed)) {
+
+    manual_range_state$selected <- sel
+
+    if (
+      !is.null(manual_range_state$first) &&
+      manual_range_state$first %in% removed
+    ) {
+      manual_range_state$first <- NULL
+    }
+
+    return()
+  }
+
+  if (!length(added)) {
+
+    manual_range_state$selected <- sel
+    return()
+  }
+
+  new_col <- tail(added, 1)
+
+  # First click defines start
+  if (is.null(manual_range_state$first)) {
+
+    manual_range_state$first <- new_col
+    manual_range_state$selected <- sel
+
+    return()
+  }
+
+  # Second click defines end
+  first_col <- manual_range_state$first
+
+  p1 <- match(first_col, cols)
+  p2 <- match(new_col, cols)
+
+  if (!is.na(p1) && !is.na(p2)) {
+
+    range_cols <- cols[
+      min(p1, p2):max(p1, p2)
+    ]
+
+    # Add this range to already selected ranges
+    all_selected <- union(
+      manual_range_state$selected,
+      range_cols
+    )
+
+    # Keep native table order
+    all_selected <- cols[
+      cols %in% all_selected
+    ]
+
+    manual_range_state$first <- NULL
+    manual_range_state$selected <- all_selected
+    manual_range_state$updating <- TRUE
+
     updateSelectizeInput(
       session,
       "sample_cols_manual",
-      selected = range_cols
+      selected = all_selected
     )
   }
 
@@ -1309,35 +1608,187 @@ server <- function(input, output, session) {
   })
   
   sample_cols <- reactive({
-    req(processed_std())
-    df <- processed_std()
-    cols <- names(df)
-    mode <- input$sample_mode %||% "auto"
-    meta <- c(".FID", input$id_col, input$mz_col, input$rt_col, "feature_id", "mz", "rt")
-    
-    if (mode == "manual") {
-      validate(need(length(input$sample_cols_manual) > 0, "Pick sample columns."))
-      return(intersect(input$sample_cols_manual, cols))
+
+  req(processed_std())
+
+  # Parsing succeeded, so an old sample-mapping error can be cleared
+  upload_error(NULL)
+
+  df <- processed_std()
+  cols <- names(df)
+
+  mode <- input$sample_mode %||% "auto"
+
+  meta <- unique(
+    c(
+      ".FID",
+      input$id_col,
+      input$mz_col,
+      input$rt_col,
+      "mz",
+      "rt"
+    )
+  )
+
+  meta <- meta[
+    !is.na(meta) &
+      nzchar(meta) &
+      meta != "None" &
+      meta != "Combine m/z and RT" &
+      meta != "Auto-generate (feat_1)"
+  ]
+
+  # Helper for visible errors
+  sample_error <- function(msg) {
+
+    upload_error(msg)
+
+    showNotification(
+      msg,
+      type = "error",
+      duration = 8
+    )
+
+    validate(
+      need(FALSE, msg)
+    )
+  }
+
+
+  # -------------------------
+  # Manual
+  # -------------------------
+  if (mode == "manual") {
+
+    sel <- input$sample_cols_manual %||% character(0)
+
+    if (!length(sel)) {
+      sample_error(
+        "Select at least one sample column."
+      )
     }
-    
-    if (mode == "kws") {
-      kws <- input$sample_kws %||% character(0)
-      idx <- multi_sample_idx(cols, kws)
-      validate(need(length(idx) > 0, "No sample columns matched the keywords."))
-      sc <- cols[idx]
-      return(setdiff(sc, meta))
+
+    sc <- intersect(
+      sel,
+      cols
+    )
+
+    sc <- setdiff(
+      sc,
+      meta
+    )
+
+    if (!length(sc)) {
+      sample_error(
+        "Selected sample columns were not found or contain only ID/m/z/RT columns."
+      )
     }
-    
-    cand <- setdiff(cols, meta)
-    cand <- cand[!grepl("^row\\b", cand, ignore.case = TRUE)] 
-    prop_num <- vapply(df[cand], function(x) {
-      x2 <- suppressWarnings(as.numeric(as.character(x)))
-      mean(is.finite(x2), na.rm = TRUE)
-    }, numeric(1))
-    sc <- cand[prop_num >= 0.7] 
-    validate(need(length(sc) > 0, "Auto-detect found no numeric columns."))
-    sc
-  })
+
+    return(sc)
+  }
+
+
+  # -------------------------
+  # Keywords
+  # -------------------------
+  if (mode == "kws") {
+
+    kws <- input$sample_kws %||% character(0)
+    kws <- as.character(kws)
+    kws <- kws[nzchar(kws)]
+
+    if (!length(kws)) {
+      sample_error(
+        "Add at least one sample-column keyword."
+      )
+    }
+
+    idx <- multi_sample_idx(
+      cols,
+      kws
+    )
+
+    if (!length(idx)) {
+
+      sample_error(
+        paste0(
+          "No sample columns matched the keywords: ",
+          paste(kws, collapse = ", ")
+        )
+      )
+    }
+
+    sc <- cols[idx]
+
+    sc <- setdiff(
+      sc,
+      meta
+    )
+
+    if (!length(sc)) {
+
+      sample_error(
+        "Keyword matches correspond only to Feature ID, m/z, or RT columns."
+      )
+    }
+
+    return(sc)
+  }
+
+
+  # -------------------------
+  # Auto
+  # -------------------------
+  cand <- setdiff(
+    cols,
+    meta
+  )
+
+  cand <- cand[
+    !grepl(
+      "^row\\b",
+      cand,
+      ignore.case = TRUE
+    )
+  ]
+
+  if (!length(cand)) {
+    sample_error(
+      "No candidate sample columns were found."
+    )
+  }
+
+  prop_num <- vapply(
+    df[cand],
+    function(x) {
+
+      x2 <- suppressWarnings(
+        as.numeric(
+          as.character(x)
+        )
+      )
+
+      mean(
+        is.finite(x2),
+        na.rm = TRUE
+      )
+    },
+    numeric(1)
+  )
+
+  sc <- cand[
+    prop_num >= 0.7
+  ]
+
+  if (!length(sc)) {
+
+    sample_error(
+      "Auto-detect found no numeric sample columns. Switch to Manual or Keywords."
+    )
+  }
+
+  sc
+})
   
   sample_name_map <- reactive({
   req(sample_cols())
