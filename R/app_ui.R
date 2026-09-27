@@ -203,6 +203,7 @@ fluidPage(
       selectInput("data_type", "Data table type:",
                   choices = c("mzMine" = "mzmine", "xcms" = "xcms", "MS-DIAL" = "msdial", "Generic" = "default"),
                   selected = "mzmine"),
+      uiOutput("format_requirements"),
       fileInput("raw_file", "Upload Peak Table (*.csv)", accept = ".csv"),
       helpText(HTML("<i class='fa fa-info-circle'></i> Need data to test? Check examples in <a href='https://github.com/plyush1993/OmniPeak' target='_blank'>GitHub</a>.")),
       uiOutput("upload_tab_error"),
@@ -446,7 +447,7 @@ uiOutput("metadata_match_message")
             div(class = "well", style = "background-color: #f8f9fa; border-left: 5px solid #3498db; padding: 15px; margin-bottom: 15px;",
               h4(tags$b("1. Upload & Parse"), style = "margin-top: 0; color: #3498db;"),
               p(style = "margin-bottom: 0;",
-              HTML("Select your software source (<b><i>mzMine</i></b>, <b><i>MS-DIAL</i></b>, <b><i>xcms</i></b>, etc.) and upload your <code>.csv</code> peak table. OmniPeak automatically standardizes the columns by selected names and detects your sample data by provided keywords. You can also specify Feature ID column (which becomes Tidy headers, and also Feature column in Standard Peak Table), by default: 'mz_rt'.")
+              HTML("Select your software source (<b><i>mzMine</i></b>, <b><i>MS-DIAL</i></b>, <b><i>xcms</i></b>, etc.) and upload your <code>.csv</code> peak table. OmniPeak automatically standardizes the columns by selected names and detects your sample data by provided keywords. You can also specify Feature ID column which becomes Tidy headers, and also Feature column in Standard Peak Table.")
             )),
 
             div(

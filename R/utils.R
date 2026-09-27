@@ -29,6 +29,10 @@ standardize_peak_table <- function(df, type) {
   # Basic name cleanup to start
   names(df) <- trimws(names(df))
 
+  if (".FID" %in% names(df)) {
+  stop("Column name '.FID' is reserved by OmniPeak. Please rename it before upload.")
+}
+
   export_template  <- names(df)
   export_colmap    <- c()
   export_rt_factor <- 1
@@ -61,19 +65,9 @@ standardize_peak_table <- function(df, type) {
     }
     df <- dplyr::rename(df, mz = !!mz_col, rt = !!rt_col)
 
-    id_col <- find_col("row id", names(df))
-    if (!is.na(id_col)) {
-      export_colmap <- c(export_colmap, feature_id = id_col)
-      df$feature_id <- df[[id_col]]
-    }
-
   } else if (type == "default") {
-    req_cols <- c("Feature", "mz", "rt")
-    miss <- setdiff(req_cols, names(df))
-    export_colmap <- c(mz = "mz", rt = "rt")
     export_template <- names(df)
-    if (length(miss)) stop("DEFAULT table missing: ", paste(miss, collapse = ", "))
-    df <- dplyr::rename(df, mz = `mz`, rt = `rt`)
+    export_colmap <- c()
 
   } else if (type == "msdial") {
     header_keywords <- c("Alignment ID", "Average Mz", "Average Rt")
@@ -132,17 +126,31 @@ standardize_peak_table <- function(df, type) {
     miss <- setdiff(req_cols, names(df))
     if (length(miss)) stop("XCMS table missing: ", paste(miss, collapse = ", "))
 
-    export_template <- names(df)
-    export_colmap <- c(mz = "mzmed", rt = "rtmed")
+    id_col <- names(df)[1]
 
-    df <- dplyr::rename(df, mz = mzmed, rt = rtmed)
-    export_rt_factor <- 1
-    df$rt <- df$rt / 1
+export_template <- names(df)
+
+export_colmap <- c(
+  "Feature ID" = id_col,
+  mz = "mzmed",
+  rt = "rtmed"
+)
+
+names(df)[1] <- "Feature ID"
+
+df <- dplyr::rename(df, mz = mzmed, rt = rtmed)
+
+export_rt_factor <- 1
+df$rt <- suppressWarnings(as.numeric(df$rt)) / 1
   }
 
+if ("mz" %in% names(df)) {
   df$mz <- suppressWarnings(as.numeric(df$mz))
+}
+
+if ("rt" %in% names(df)) {
   df$rt <- suppressWarnings(as.numeric(df$rt))
-  if (!"feature_id" %in% names(df)) df$feature_id <- seq_len(nrow(df))
+}
 
   attr(df, "export_template")  <- export_template
   attr(df, "export_colmap")    <- export_colmap
@@ -157,11 +165,7 @@ format_final_table_as_input <- function(final_df_with_fid, type,
                                         export_rt_factor = 1) {
   df <- as.data.frame(final_df_with_fid, check.names = FALSE, stringsAsFactors = FALSE)
 
-  if (identical(type, "mzmine")) {
-    df <- df[, setdiff(names(df), ".FID"), drop = FALSE]
-  } else {
-    df <- df[, setdiff(names(df), c("feature_id", ".FID")), drop = FALSE]
-  }
+ df <- df[, setdiff(names(df), ".FID"), drop = FALSE]
 
   if (is.finite(export_rt_factor) && export_rt_factor != 1 && "rt" %in% names(df)) {
     df$rt <- suppressWarnings(as.numeric(df$rt)) * export_rt_factor
