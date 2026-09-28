@@ -51,50 +51,6 @@ app_server <- function(input, output, session) {
   # ---------------------------------------------------------
   # STEP 1: Parse Upload
   # ---------------------------------------------------------
-  output$format_requirements <- renderUI({
-
-  type <- input$data_type %||% "mzmine"
-
-  txt <- switch(
-    type,
-
-    mzmine = HTML(
-      "<b>mzMine:</b> CSV peak table containing an m/z column
-       (<code>row m/z</code> or <code>mz</code>) and an RT column
-       (<code>row retention time</code> or <code>rt</code>).
-       <code>Row ID</code> is recommended as the Feature ID.
-       Sample columns are defined after upload."
-    ),
-
-    xcms = HTML(
-      "<b>xcms:</b> CSV feature table containing
-       <code>mzmed</code> and <code>rtmed</code>.
-       The first column is treated as the native Feature ID.
-       <code>rtmed</code> is interpreted in seconds and converted internally to minutes."
-    ),
-
-    msdial = HTML(
-      "<b>MS-DIAL:</b> alignment CSV containing
-       <code>Average Mz</code> and <code>Average Rt(min)</code>.
-       <code>Alignment ID</code> is recommended as the Feature ID.
-       Standard MS-DIAL metadata rows preceding the header are supported."
-    ),
-
-    default = HTML(
-      "<b>Generic:</b> any CSV peak table with one feature per row.
-       No predefined column names are required.
-       After upload, select the Feature ID, m/z, RT, and sample intensity columns.
-       m/z and RT are optional for tidy reshaping, but required for the Standard Peak Table
-       or for an ID generated from m/z + RT."
-    )
-  )
-
-  omni_status_box(
-    type = "info",
-    text = txt
-  )
-})
-
   observeEvent(list(input$raw_file, input$data_type), {
 
   req(input$raw_file)
